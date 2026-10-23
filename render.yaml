@@ -1,0 +1,45 @@
+# Blueprint do Render para a bridge R2PHARMA (whatsapp-web.js).
+# Requer plano pago: o disco persistente (/data) guarda a sessão do WhatsApp.
+# Sem ele, cada deploy/reinício exige escanear o QR Code de novo.
+services:
+  - type: web
+    name: r2pharma-whatsapp-bridge
+    runtime: docker
+    plan: standard           # 2 GB: com 512 MB o Chromium é morto por falta de memória (OOM) no pareamento
+    region: virginia         # região do Render mais próxima do Brasil
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /healthz
+    numInstances: 1          # whatsapp-web.js suporta só uma instância por sessão
+    autoDeploy: true
+    disk:
+      name: whatsapp-auth
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: HOST
+        value: 0.0.0.0       # obrigatório: o padrão da app é 127.0.0.1
+      - key: PORT
+        value: "3002"
+      - key: TRUST_PROXY
+        value: "1"           # Render tem 1 proxy reverso à frente do serviço
+      - key: LOG_LEVEL
+        value: info
+      - key: BRIDGE_TOKEN
+        generateValue: true  # o Render gera um segredo aleatório (> 32 caracteres)
+      - key: WHATSAPP_AUTH_PATH
+        value: /data/.wwebjs_auth
+      - key: WHATSAPP_GROUPS_PATH
+        value: /data/groups.json
+      - key: WHATSAPP_CLIENT_ID
+        value: r2pharma-principal
+      - key: CHROME_EXECUTABLE_PATH
+        value: /usr/bin/chromium
+      - key: PUPPETEER_HEADLESS
+        value: "true"
+      - key: R2PHARMA_EVENT_WEBHOOK_URL
+        sync: false          # opcional; preencha no painel (precisa ser HTTPS)
+      - key: R2PHARMA_EVENT_WEBHOOK_SECRET
+        sync: false
