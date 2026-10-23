@@ -1,0 +1,248 @@
+{
+  "schema_version": "1.0",
+  "trace_id": "TRACE-R2PHARMA-BRIDGE-PACKAGE-20261023",
+  "package": {
+    "name": "r2pharma-whatsapp-bridge-external",
+    "version": "1.1.0",
+    "format": [
+      "zip",
+      "tar.gz"
+    ],
+    "source_digest": "sha256:947097d24dd8b920a73854ef83cccdef39455094615fbef6842d3f618d2d7e75",
+    "manus_dependency": false
+  },
+  "scope": {
+    "included": [
+      "Bridge source and locked npm metadata",
+      "Dockerfile and Compose with local build",
+      "Windows/IIS/ARR and Linux/systemd/Nginx references",
+      "Tests, security notice, runbook and validation evidence"
+    ],
+    "excluded": [
+      "Manus-only initializer",
+      "node_modules",
+      "real .env, tokens and HMAC secrets",
+      "QR Code, LocalAuth, groups, contacts and messages",
+      "OCI image tar; Docker daemon unavailable in sandbox",
+      "Node.js, Chromium, IIS, ARR, Nginx, NSSM, certificates, DNS, firewall and production access"
+    ]
+  },
+  "source": {
+    "version": "1.1.0",
+    "vcs": "not available in source snapshot; generated from validated sandbox bridge directory",
+    "source_path_not_for_deployment": "/home/ubuntu/r2pharma-whatsapp-bridge"
+  },
+  "validation": {
+    "npm_ci_omit_dev": "pass",
+    "npm_run_check": "pass",
+    "npm_test": "pass (19 tests)",
+    "patcher_idempotency": "pass",
+    "npm_audit_omit_dev_high": "residual_risk (9 high, 1 moderate; exit 1)",
+    "docker_build": "not_run (Docker daemon unavailable in sandbox)",
+    "real_whatsapp_session": "not_run",
+    "real_qr_or_messages": "not_run"
+  },
+  "persistence": {
+    "required": true,
+    "paths": [
+      "WHATSAPP_AUTH_PATH",
+      "WHATSAPP_GROUPS_PATH",
+      "WHATSAPP_DELIVERY_LEDGER_PATH"
+    ],
+    "operator_action": "Configure a protected persistent volume/directory externally; backup and recovery test are mandatory before production."
+  },
+  "delivery": {
+    "zip": "r2pharma-whatsapp-bridge-external-1.1.0.zip",
+    "tar_gz": "r2pharma-whatsapp-bridge-external-1.1.0.tar.gz",
+    "published": false,
+    "production_approval": false
+  },
+  "artifacts": {
+    "inventory_excludes_self_referential_files": [
+      "PACKAGE-MANIFEST.json",
+      "PACKAGE-SHA256SUMS.txt"
+    ],
+    "files": [
+      {
+        "path": ".dockerignore",
+        "size_bytes": 92,
+        "sha256": "5b004bb3f8c1324ce3dc0ac5e69a7aec657c92c336458351e3c157319c8f1da7"
+      },
+      {
+        "path": ".env.example",
+        "size_bytes": 1089,
+        "sha256": "2b623fcb56b7c542ae0e52686c9b52da3f3fbf0d7756b7fdbf37590b894aaf1c"
+      },
+      {
+        "path": "Dockerfile",
+        "size_bytes": 1246,
+        "sha256": "2ce8cfee34344dc99e1d6b3bfd920f84341839c64a46ff6c85cc1027ee524ff5"
+      },
+      {
+        "path": "MANIFEST-IIS.md",
+        "size_bytes": 2052,
+        "sha256": "0dbb06627dc5022b8a21932d0f537c03a1522016ce36c8099d25b98918fd17f2"
+      },
+      {
+        "path": "MANIFEST.md",
+        "size_bytes": 2083,
+        "sha256": "1055aeca1e50a4c99343d86e55bef72e6ceaa450fc709a46c4657dd56d5916b1"
+      },
+      {
+        "path": "README-IIS.md",
+        "size_bytes": 933,
+        "sha256": "12b5f8a16bc9a5bcb59900cfddce727108cb6bac2f5b3e28ef4ddbc45e50be8d"
+      },
+      {
+        "path": "README.md",
+        "size_bytes": 5770,
+        "sha256": "fddc4e90408fbf556649fdee8af03ded0ca62977228fb824fc859a8f69287f6c"
+      },
+      {
+        "path": "SECURITY.md",
+        "size_bytes": 2731,
+        "sha256": "00a3491a9b317b9d841660cb752ca35f43006e8e6412871af81555a9ca89d919"
+      },
+      {
+        "path": "deploy/iis/.env.windows.example",
+        "size_bytes": 1111,
+        "sha256": "a4b1c2c62cfec7bb6d67f18362753c8fbc91490a7d1b3a09887c30b360d5a5a1"
+      },
+      {
+        "path": "deploy/iis/README.md",
+        "size_bytes": 9498,
+        "sha256": "b7e799a3d28726084286811c2571687cdb83264664cc8697fce473167d975320"
+      },
+      {
+        "path": "deploy/iis/health-check.ps1",
+        "size_bytes": 812,
+        "sha256": "535e95c44ce24d433c777d08f9a856600ff18b056acb067b5c7715f10e91d276"
+      },
+      {
+        "path": "deploy/iis/install-service.ps1",
+        "size_bytes": 3174,
+        "sha256": "742d57a4ae6fb5eb275d11d24eba818ad6e6e0ad1a5fe57a3077cf80c8b23d0f"
+      },
+      {
+        "path": "deploy/iis/uninstall-service.ps1",
+        "size_bytes": 647,
+        "sha256": "24e3ad59a2d2d3b4940804c6394c90710ba2ebe66a381d662074d01d8f752f0c"
+      },
+      {
+        "path": "deploy/iis/web.config",
+        "size_bytes": 911,
+        "sha256": "fbb371e82eccf06b04e1f6d2b96be12a49c953f4dcda99e1e4ca5a2a58cefd9c"
+      },
+      {
+        "path": "deploy/iis/web.config.example",
+        "size_bytes": 911,
+        "sha256": "fbb371e82eccf06b04e1f6d2b96be12a49c953f4dcda99e1e4ca5a2a58cefd9c"
+      },
+      {
+        "path": "deploy/nginx/r2pharma-whatsapp-bridge.conf.example",
+        "size_bytes": 1009,
+        "sha256": "62b7aa093ba34a0119121b75bdfed9da596ad5596543b3d027f6314489d165ce"
+      },
+      {
+        "path": "deploy/systemd/r2pharma-whatsapp-bridge.service",
+        "size_bytes": 614,
+        "sha256": "cb9d3a3a32644b73e9279409ee38cce643ff37a7ffa47c63a50af5f6bfb551f2"
+      },
+      {
+        "path": "docker-compose.yml",
+        "size_bytes": 544,
+        "sha256": "7ee92ceec2acbef2963744798edb53b91080158265f3cc8201727a5b6d6ec958"
+      },
+      {
+        "path": "evidence/validation/check.log",
+        "size_bytes": 198,
+        "sha256": "39bd59fa05dd42da18e4bd233b735d0d438081b8453f202110254af29b2bd01a"
+      },
+      {
+        "path": "evidence/validation/npm-audit-summary.json",
+        "size_bytes": 369,
+        "sha256": "7ae79878b203dc71f67c04a49d77fff6a62a14b245da867787daf08a76a14607"
+      },
+      {
+        "path": "evidence/validation/npm-ci.log",
+        "size_bytes": 939,
+        "sha256": "807c447583710e55a879ce762a97837321f421124f48cb1ae5a62fc4ebf48179"
+      },
+      {
+        "path": "evidence/validation/test.log",
+        "size_bytes": 7676,
+        "sha256": "c4c53b9004a426f6f7828de4f9354d939ffa3d8df9f98dcbcb1916da4bf19547"
+      },
+      {
+        "path": "evidence/work-item.json",
+        "size_bytes": 4611,
+        "sha256": "84e1171f2442c7670307a2d9bc2fed9daeb51aecab5c3d5cc4a24a18dbda2d1f"
+      },
+      {
+        "path": "package-lock.json",
+        "size_bytes": 124014,
+        "sha256": "6b3a3c78787f100e677806be01bf5a53db59159b91fe4ace6e2c9ab640a16a90"
+      },
+      {
+        "path": "package.json",
+        "size_bytes": 782,
+        "sha256": "d8ed6632b9198820e06118d6b14c58c78a704c2242669a692433b0f269a640c1"
+      },
+      {
+        "path": "scripts/generate-token.mjs",
+        "size_bytes": 112,
+        "sha256": "14f2859dde26fc5f95cf5c97571c7b822156f5e4c46a88bbdbe06f5434620f25"
+      },
+      {
+        "path": "scripts/patch-wwebjs-201832.cjs",
+        "size_bytes": 20713,
+        "sha256": "52932402c24e5a678a9ee0769af22a39bac7c8951f891d7b75beb901fa30a1a7"
+      },
+      {
+        "path": "scripts/wwebjs-201832.patch",
+        "size_bytes": 20670,
+        "sha256": "28775f4f57c324362988a5a747f78a280ffb0d838005f84a8f1fe116e8a000e1"
+      },
+      {
+        "path": "src/config.js",
+        "size_bytes": 3110,
+        "sha256": "2a28120445defdda5bf6cc1d462d206926807d8aec288064083790bc4717e2e7"
+      },
+      {
+        "path": "src/index.js",
+        "size_bytes": 844,
+        "sha256": "d7d50e05eae89f4602849af2420a01b3e541aed9d1a1e88f376b7827bcce1c74"
+      },
+      {
+        "path": "src/logger.js",
+        "size_bytes": 686,
+        "sha256": "f9f34760d21c0389cebb7614e9a7ee3ede85e5e2bc9ae47365e6390cf99b9856"
+      },
+      {
+        "path": "src/server.js",
+        "size_bytes": 5199,
+        "sha256": "1e08198844e7497527e95ae7bf23e69edb4064a6090b5a1719ad4d7fb2dc85e6"
+      },
+      {
+        "path": "src/session-manager.js",
+        "size_bytes": 25439,
+        "sha256": "6f0671f6b66f79c5188237f8009a18cd77d81529063da21a3feaca21207a6c97"
+      },
+      {
+        "path": "test/config.test.js",
+        "size_bytes": 1732,
+        "sha256": "b6c6756cecf6e5de06202136ea6d1af091e7e450f3dbff1058158a8ef06b41c7"
+      },
+      {
+        "path": "test/server.test.js",
+        "size_bytes": 5574,
+        "sha256": "9960bf42411d43e2bfddc5d79f30d883afa63642c453011400def6243b5ca1f0"
+      },
+      {
+        "path": "test/session-manager.test.js",
+        "size_bytes": 13312,
+        "sha256": "0a12eb8852e5312e872e4f8b882a0a8681d576ebbf38dd62a801a529ee9ae96a"
+      }
+    ]
+  }
+}

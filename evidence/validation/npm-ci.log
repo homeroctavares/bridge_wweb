@@ -1,0 +1,22 @@
+npm warn deprecated glob@10.5.0: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+npm warn deprecated fluent-ffmpeg@2.1.3: Package no longer supported. Contact Support at https://www.npmjs.com/support for more info.
+
+> r2pharma-whatsapp-bridge@1.1.0 postinstall
+> node scripts/patch-wwebjs-201832.cjs
+
+patch-wwebjs-201832: applied (Contact.js LID-block hunk intentionally skipped — absent in 1.34.7)
+
+added 283 packages, and audited 284 packages in 4s
+
+56 packages are looking for funding
+  run `npm fund` for details
+
+10 vulnerabilities (1 moderate, 9 high)
+
+To address issues that do not require attention, run:
+  npm audit fix
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run `npm audit` for details.

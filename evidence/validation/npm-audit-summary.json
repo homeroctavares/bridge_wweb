@@ -1,0 +1,15 @@
+{
+  "command": "npm audit --omit=dev --audit-level=high --json",
+  "exit_code": 1,
+  "status": "residual_risk",
+  "vulnerabilities": {
+    "critical": 0,
+    "high": 9,
+    "moderate": 1,
+    "low": 0,
+    "info": 0,
+    "total": 10
+  },
+  "note": "No npm audit fix was executed; forced dependency changes were not applied.",
+  "validated_at": "2026-10-23T11:29:47Z"
+}

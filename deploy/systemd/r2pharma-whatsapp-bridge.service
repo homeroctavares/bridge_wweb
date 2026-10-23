@@ -1,0 +1,24 @@
+[Unit]
+Description=R2PHARMA WhatsApp Web.js Bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=r2pharma-whatsapp
+Group=r2pharma-whatsapp
+WorkingDirectory=/opt/r2pharma-whatsapp-bridge
+EnvironmentFile=/etc/r2pharma/whatsapp-bridge.env
+Environment=NODE_ENV=production
+Environment=CHROME_EXECUTABLE_PATH=/usr/bin/chromium
+ExecStart=/usr/bin/node /opt/r2pharma-whatsapp-bridge/src/index.js
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/r2pharma-whatsapp
+
+[Install]
+WantedBy=multi-user.target

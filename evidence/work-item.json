@@ -1,0 +1,67 @@
+{
+  "schema_version": "1.1",
+  "trace_id": "TRACE-R2PHARMA-BRIDGE-PACKAGE-20261023",
+  "project_id": "dhUrWxWXbZ2HtSSDyJ3kf6",
+  "task_id": "XrZeNbjtKljuIRW9NXusY7",
+  "title": "Gerar pacote externo reproduzível da R2PHARMA WhatsApp Bridge 1.1.0",
+  "owner": "Owner do projeto R2PHARMA / SysManager",
+  "executor": "Manus agent no sandbox",
+  "authorities": {
+    "source": "Solicitação do owner em 2026-10-23T08:27:34-03:00: gerar aqui um pacote da bridge para publicação em ambiente externo.",
+    "reviewers": {
+      "G2": ["Revisor independente autorizado pelo projeto R2PHARMA"],
+      "G3": ["Revisor independente autorizado pelo projeto R2PHARMA"]
+    },
+    "release_approvers": ["Owner do projeto R2PHARMA / equipe autorizada do ambiente externo"],
+    "exception_approvers": ["Owner do projeto R2PHARMA / segurança do cliente"]
+  },
+  "risk_tier": "R2",
+  "purpose": "Entregar um arquivo externo auditável e reproduzível para instalação da bridge fora do Manus, sem segredos, sessão WhatsApp ou dependência de infraestrutura Manus.",
+  "scope": {
+    "included": [
+      "ZIP e TAR.GZ com código-fonte, package-lock, Dockerfile, Compose com build local, deploy IIS/ARR, Nginx/systemd, testes e documentação.",
+      "Validação local de npm ci --omit=dev, patch idempotente, check, testes, conteúdo, symlinks e SHA-256.",
+      "Manifesto do pacote, checksum externo e evidência Manus-native."
+    ],
+    "excluded": [
+      "Publicação no ambiente externo ou no WebDev do Manus.",
+      "Construção ou entrega de imagem OCI pré-construída, pois o daemon Docker não está disponível no sandbox.",
+      "Criação de .env real, token, segredo HMAC, certificado, DNS, firewall, QR Code, pareamento, logout ou dados de cliente.",
+      "Alteração funcional do código da bridge."
+    ]
+  },
+  "data_classification": "confidential",
+  "affected_systems": ["R2PHARMA WhatsApp Bridge", "Docker/Compose externo", "Windows Server/IIS/ARR", "Linux/systemd/Nginx"],
+  "requirements": [
+    "O pacote não pode depender do Manus.",
+    "O pacote deve excluir segredos, dados pessoais, node_modules e sessão WhatsApp.",
+    "A instalação externa deve reproduzir o backport whatsapp-web.js via npm ci --omit=dev.",
+    "A sessão, grupos e ledger devem permanecer em armazenamento persistente no destino.",
+    "O pacote deve conter instruções de rollback, backup, validação e risco upstream."
+  ],
+  "acceptance_criteria": [
+    "ZIP e TAR.GZ existem e seus SHA-256 são registrados.",
+    "PACKAGE-MANIFEST.json lista inclusão e exclusão reais.",
+    "start-development-manus.sh não está presente no pacote.",
+    "Nenhum symlink, .env real, token, QR, LocalAuth, node_modules ou dado operacional está presente.",
+    "npm ci --omit=dev, npm run check e npm test passam em staging externo simulado no sandbox.",
+    "O pacote inclui Dockerfile e Compose com build local, mas declara imagem OCI pré-construída como não incluída.",
+    "A revisão independente G2/G3 e o manifesto de evidências são gerados antes da entrega."
+  ],
+  "dependencies": ["Node.js 22.x no modo Windows/Linux", "Chromium/Chrome no modo Windows/Linux", "Docker Engine opcional", "IIS/ARR ou Nginx opcional", "NSSM aprovado pelo cliente no modo Windows"],
+  "tools_and_connectors": ["Filesystem sandbox", "npm", "tar", "zip", "SHA-256", "nenhum connector externo"],
+  "persistence": {
+    "required": true,
+    "stateless_justification": null,
+    "storage": "No destino, WHATSAPP_AUTH_PATH, WHATSAPP_GROUPS_PATH e delivery ledger devem usar volume/diretório persistente e restrito.",
+    "schema_or_model": "Modelo operacional já existente da bridge; nenhum schema de banco é criado pelo pacote.",
+    "read_path": "README.md e deploy/* do pacote externo.",
+    "migration": null,
+    "backup_restore": "O runbook exige backup criptografado do diretório/volume de autenticação e teste de restauração isolado.",
+    "retention": "Aplicar a política de retenção do cliente ao volume de sessão, grupos e ledger; o pacote não escolhe prazo.",
+    "recovery_test": "Validação real de reboot/restauração deve ocorrer no ambiente externo homologatório; não foi executada no sandbox."
+  },
+  "reversibility": "Remover o arquivo distribuído e manter o pacote anterior; no destino, parar o serviço, restaurar o diretório do pacote e preservar/restaurar o volume somente com autorização.",
+  "observability": ["PACKAGE-MANIFEST.json", "PACKAGE-SHA256SUMS.txt", "npm ci/check/test logs", "healthz/readyz", "logs da bridge sem token, QR ou conteúdo"],
+  "status": "completed"
+}

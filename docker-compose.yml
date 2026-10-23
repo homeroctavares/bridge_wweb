@@ -1,0 +1,27 @@
+services:
+  whatsapp-bridge:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: r2pharma-whatsapp-bridge:1.1.0
+    container_name: r2pharma-whatsapp-bridge
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3002:3002"
+    volumes:
+      - whatsapp_auth:/data
+    restart: unless-stopped
+    init: true
+    shm_size: "1gb"
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  whatsapp_auth:
+    name: r2pharma_whatsapp_auth

@@ -1,0 +1,137 @@
+
+> r2pharma-whatsapp-bridge@1.1.0 test
+> node --test
+
+TAP version 13
+# Subtest: aceita webhook HTTP local somente no desenvolvimento
+ok 1 - aceita webhook HTTP local somente no desenvolvimento
+  ---
+  duration_ms: 78.836778
+  ...
+# Subtest: rejeita webhook HTTP externo no desenvolvimento e qualquer HTTP em produção
+ok 2 - rejeita webhook HTTP externo no desenvolvimento e qualquer HTTP em produção
+  ---
+  duration_ms: 132.487898
+  ...
+# {"ts":"2026-10-23T11:29:41.270Z","level":"info","event":"http_request","method":"GET","path":"/healthz","status":200,"duration_ms":4}
+# Subtest: health pública não exige token
+ok 3 - health pública não exige token
+  ---
+  duration_ms: 36.347169
+  ...
+# {"ts":"2026-10-23T11:29:41.286Z","level":"info","event":"http_request","method":"GET","path":"/session/status","status":401,"duration_ms":1}
+# Subtest: rotas v1 rejeitam chamadas sem Bearer token
+ok 4 - rotas v1 rejeitam chamadas sem Bearer token
+  ---
+  duration_ms: 8.508706
+  ...
+# {"ts":"2026-10-23T11:29:41.293Z","level":"info","event":"http_request","method":"GET","path":"/v1/session/status","status":200,"duration_ms":1}
+# {"ts":"2026-10-23T11:29:41.296Z","level":"info","event":"http_request","method":"GET","path":"/v1/session/qrcode","status":200,"duration_ms":0}
+# Subtest: status e QR Code respeitam o contrato da aplicação principal
+ok 5 - status e QR Code respeitam o contrato da aplicação principal
+  ---
+  duration_ms: 9.893958
+  ...
+# {"ts":"2026-10-23T11:29:41.301Z","level":"info","event":"http_request","method":"POST","path":"/v1/session/conectar","status":202,"duration_ms":1}
+# {"ts":"2026-10-23T11:29:41.304Z","level":"info","event":"http_request","method":"POST","path":"/v1/session/reiniciar","status":202,"duration_ms":1}
+# {"ts":"2026-10-23T11:29:41.309Z","level":"info","event":"http_request","method":"POST","path":"/v1/session/desconectar","status":202,"duration_ms":1}
+# Subtest: ações protegidas delegam ao gerenciador
+ok 6 - ações protegidas delegam ao gerenciador
+  ---
+  duration_ms: 11.577824
+  ...
+# {"ts":"2026-10-23T11:29:41.312Z","level":"info","event":"http_request","method":"POST","path":"/v1/session/sincronizar","status":409,"duration_ms":1}
+# Subtest: ações recusadas pelo estado da sessão retornam conflito sem falso sucesso
+ok 7 - ações recusadas pelo estado da sessão retornam conflito sem falso sucesso
+  ---
+  duration_ms: 3.473123
+  ...
+# {"ts":"2026-10-23T11:29:41.331Z","level":"info","event":"http_request","method":"POST","path":"/v1/messages/send","status":422,"duration_ms":1}
+# {"ts":"2026-10-23T11:29:41.336Z","level":"info","event":"http_request","method":"POST","path":"/v1/messages/send","status":202,"duration_ms":1}
+# {"ts":"2026-10-23T11:29:41.340Z","level":"info","event":"http_request","method":"POST","path":"/v1/messages/send","status":202,"duration_ms":0}
+# Subtest: envio protegido valida texto/anexo e delega o payload
+ok 8 - envio protegido valida texto/anexo e delega o payload
+  ---
+  duration_ms: 30.38288
+  ...
+# {"ts":"2026-10-23T11:29:41.347Z","level":"info","event":"http_request","method":"POST","path":"/v1/messages/send","status":202,"duration_ms":1}
+# Subtest: envio protegido encaminha a chave estável de entrega
+ok 9 - envio protegido encaminha a chave estável de entrega
+  ---
+  duration_ms: 3.984792
+  ...
+# (node:1156909) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+# (Use `node --trace-deprecation ...` to show where the warning was created)
+# Subtest: backoff cresce progressivamente e respeita o teto
+ok 10 - backoff cresce progressivamente e respeita o teto
+  ---
+  duration_ms: 1.153044
+  ...
+# {"ts":"2026-10-23T11:29:41.449Z","level":"info","event":"whatsapp_client_initializing","session_id":"principal","client_id":"test-client"}
+# Subtest: QR expirado limpa o valor antigo e reinicia o ciclo de pareamento
+ok 11 - QR expirado limpa o valor antigo e reinicia o ciclo de pareamento
+  ---
+  duration_ms: 27.647329
+  ...
+# {"ts":"2026-10-23T11:29:41.471Z","level":"info","event":"whatsapp_client_initializing","session_id":"principal","client_id":"test-client"}
+# {"ts":"2026-10-23T11:29:41.471Z","level":"error","event":"whatsapp_client_failure","session_id":"principal","message":"Falha ao inicializar o cliente WhatsApp.","error":"simulated initialization failure"}
+# {"ts":"2026-10-23T11:29:41.471Z","level":"warn","event":"whatsapp_reconnect_scheduled","session_id":"principal","retry_in_ms":1000,"failures":1}
+# {"ts":"2026-10-23T11:29:41.472Z","level":"info","event":"whatsapp_session_disconnected","session_id":"principal"}
+# Subtest: falha de inicialização agenda reconexão automática e desconectar cancela o ciclo
+ok 12 - falha de inicialização agenda reconexão automática e desconectar cancela o ciclo
+  ---
+  duration_ms: 2.762231
+  ...
+# {"ts":"2026-10-23T11:29:41.474Z","level":"info","event":"whatsapp_client_initializing","session_id":"principal","client_id":"test-client"}
+# {"ts":"2026-10-23T11:29:41.474Z","level":"error","event":"whatsapp_client_failure","session_id":"principal","message":"A autenticação da sessão WhatsApp falhou.","error":"sessão revogada"}
+# {"ts":"2026-10-23T11:29:41.474Z","level":"warn","event":"whatsapp_reconnect_scheduled","session_id":"principal","retry_in_ms":1000,"failures":1}
+# Subtest: falha de autenticação publica o evento específico e inicia reconexão
+ok 13 - falha de autenticação publica o evento específico e inicia reconexão
+  ---
+  duration_ms: 3.870345
+  ...
+# {"ts":"2026-10-23T11:29:41.479Z","level":"info","event":"whatsapp_groups_synchronized","session_id":"principal","groups_count":2}
+# Subtest: sincroniza todos os grupos e informa o total de participantes
+ok 14 - sincroniza todos os grupos e informa o total de participantes
+  ---
+  duration_ms: 3.727705
+  ...
+# {"ts":"2026-10-23T11:29:41.482Z","level":"error","event":"whatsapp_groups_sync_failure","session_id":"principal","error":"falha simulada ao ler grupos"}
+# Subtest: falha de sincronização gera evento operacional sem alterar o estado da sessão
+ok 15 - falha de sincronização gera evento operacional sem alterar o estado da sessão
+  ---
+  duration_ms: 1.62383
+  ...
+# {"ts":"2026-10-23T11:29:41.483Z","level":"info","event":"whatsapp_message_sent","session_id":"principal","messages_count":2,"attachments_count":1}
+# Subtest: envia texto e anexo ao grupo conectado com legenda
+ok 16 - envia texto e anexo ao grupo conectado com legenda
+  ---
+  duration_ms: 2.22023
+  ...
+# {"ts":"2026-10-23T11:29:41.486Z","level":"info","event":"whatsapp_message_sent","session_id":"principal","messages_count":1,"attachments_count":0}
+# Subtest: deduplica uma entrega estável e recupera o resultado do ledger após reinicialização
+ok 17 - deduplica uma entrega estável e recupera o resultado do ledger após reinicialização
+  ---
+  duration_ms: 5.033258
+  ...
+# {"ts":"2026-10-23T11:29:41.492Z","level":"info","event":"whatsapp_client_initializing","session_id":"principal","client_id":"test-client"}
+# Subtest: responde automaticamente a mensagem individual e não a trata como grupo
+ok 18 - responde automaticamente a mensagem individual e não a trata como grupo
+  ---
+  duration_ms: 14.343588
+  ...
+# {"ts":"2026-10-23T11:29:41.506Z","level":"info","event":"whatsapp_client_initializing","session_id":"principal","client_id":"test-client"}
+# Subtest: preserva nome da agenda, citação e alteração de mensagem de grupo
+ok 19 - preserva nome da agenda, citação e alteração de mensagem de grupo
+  ---
+  duration_ms: 14.397451
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 559.621454
