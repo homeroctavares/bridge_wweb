@@ -18,6 +18,8 @@ function bearerToken(req) {
 export function createApp({ manager, config }) {
   const app = express();
   app.disable('x-powered-by');
+  // Atrás de proxy (Render), confia no X-Forwarded-For para o rate limit identificar o cliente real.
+  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json({ limit: '150mb', strict: true }));
   app.use(rateLimit({ windowMs: config.rateLimitWindowMs, limit: config.rateLimitMax, standardHeaders: 'draft-7', legacyHeaders: false, skip: (req) => req.path === '/healthz' || req.path === '/readyz' }));

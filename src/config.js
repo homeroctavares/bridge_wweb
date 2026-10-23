@@ -52,6 +52,8 @@ export const config = Object.freeze({
   chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH?.trim() || '',
   headless: process.env.PUPPETEER_HEADLESS !== 'false',
   qrTtlSeconds: integerEnv('QR_TTL_SECONDS', 60, { min: 15, max: 300 }),
+  // Número de proxies reversos à frente da bridge (Render/nginx = 1). 0 desativa.
+  trustProxy: integerEnv('TRUST_PROXY', 0, { min: 0, max: 10 }),
   rateLimitWindowMs: integerEnv('RATE_LIMIT_WINDOW_MS', 60_000, { min: 1_000, max: 3_600_000 }),
   rateLimitMax: integerEnv('RATE_LIMIT_MAX', 60, { min: 5, max: 10_000 }),
   restartBackoffMs: integerEnv('RESTART_BACKOFF_MS', 5_000, { min: 1_000, max: 300_000 }),
