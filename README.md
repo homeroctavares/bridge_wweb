@@ -1,6 +1,6 @@
 # R2PHARMA WhatsApp Bridge — Pacote externo 1.1.0
 
-Este é um pacote-fonte reproduzível para instalação da bridge WhatsApp em infraestrutura externa controlada pela R2PHARMA ou por outro operador autorizado. O pacote não depende do Manus e não contém credenciais, token Bearer, segredo HMAC, QR Code, sessão WhatsApp, certificados, chave privada, contatos, grupos, mensagens ou `node_modules`.
+Este é um pacote-fonte reproduzível para instalação da bridge WhatsApp em infraestrutura externa controlada pela R2PHARMA ou por outro operador autorizado. 
 
 ## Modos de implantação
 
