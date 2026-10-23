@@ -1,4 +1,5 @@
 import fs from 'node:fs/promises';
+import { unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import QRCode from 'qrcode';
@@ -78,6 +79,7 @@ export class SessionManager {
     };
     if (this.config.chromeExecutablePath) puppeteer.executablePath = this.config.chromeExecutablePath;
 
+    this.#clearStaleBrowserLocks();
     const client = this.clientFactory({
       authStrategy: new LocalAuth({ clientId: this.config.clientId, dataPath: this.config.authPath }),
       puppeteer,
@@ -91,6 +93,26 @@ export class SessionManager {
     } catch (error) {
       await this.#fail('Falha ao inicializar o cliente WhatsApp.', error);
     }
+  }
+
+  /**
+   * O perfil do Chromium fica no disco persistente. Se a instância anterior foi encerrada sem fechar
+   * o navegador (OOM, deploy, reinício), os arquivos Singleton* continuam lá apontando para outro
+   * host, e o Chromium se recusa a abrir o perfil ("profile appears to be in use ... on another
+   * computer"). A bridge roda sempre com uma única instância, então é seguro removê-los antes de iniciar.
+   */
+  #clearStaleBrowserLocks() {
+    const profileDir = path.join(this.config.authPath, `session-${this.config.clientId}`);
+    const removed = [];
+    for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
+      try {
+        unlinkSync(path.join(profileDir, name));
+        removed.push(name);
+      } catch (error) {
+        if (error?.code !== 'ENOENT') logger.warn('browser_lock_cleanup_failed', { session_id: SESSION_ID, file: name, code: error?.code });
+      }
+    }
+    if (removed.length) logger.info('browser_stale_locks_removed', { session_id: SESSION_ID, files: removed });
   }
 
   #bindEvents(client) {
