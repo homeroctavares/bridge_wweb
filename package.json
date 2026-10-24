@@ -12,7 +12,7 @@
     "test": "node --test",
     "check": "node --check src/config.js && node --check src/logger.js && node --check src/session-manager.js && node --check src/server.js && node --check src/index.js",
     "token": "node scripts/generate-token.mjs",
-    "postinstall": "node scripts/patch-wwebjs-201832.cjs"
+    "postinstall": "node scripts/patch-wwebjs-201832.cjs && node scripts/patch-wwebjs-media-mime.cjs"
   },
   "dependencies": {
     "dotenv": "18.0.1",
