@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { SessionManager, normalizeMediaFileName, reconnectDelay } from '../src/session-manager.js';
+import { SessionManager, incomingMediaLimit, normalizeMediaFileName, reconnectDelay } from '../src/session-manager.js';
 
 function testConfig(root) {
   return {
@@ -41,6 +41,24 @@ test('normaliza o nome de mídia sem permitir controles, caminhos ou extensão a
   assert.equal(filename, '_foto.jpg');
   assert.match(filename, /^[^/\\\r\n]+\.jpg$/);
   assert.equal(normalizeMediaFileName(undefined, 0, 'audio/mpeg'), 'anexo-1.mp3');
+});
+
+test('permite imagens e documentos aprovados até 20 MiB', () => {
+  const allowedMimeTypes = [
+    'image/jpeg',
+    'image/png',
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  ];
+  for (const mimeType of allowedMimeTypes) {
+    assert.equal(incomingMediaLimit(mimeType), 20 * 1024 * 1024, mimeType);
+  }
+  assert.equal(incomingMediaLimit('application/zip'), 0);
+  assert.equal(normalizeMediaFileName('relatorio', 0, 'application/pdf'), 'relatorio.pdf');
+  assert.equal(normalizeMediaFileName('planilha', 1, 'application/vnd.ms-excel'), 'planilha.xls');
 });
 
 test('QR expirado limpa o valor antigo e reinicia o ciclo de pareamento', async () => {
@@ -426,6 +444,65 @@ test('encaminha imagem recebida dentro do limite com conteúdo base64 para persi
       tamanho_bytes: Buffer.byteLength(data, 'base64'),
       data_base64: data,
     }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('encaminha PDF e documentos Office permitidos com conteúdo base64', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-documents-ok-'));
+  const previousFetch = globalThis.fetch;
+  const handlers = new Map();
+  const events = [];
+  globalThis.fetch = async (_url, init) => {
+    events.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.clientFactory = () => ({
+    on(event, handler) { handlers.set(event, handler); },
+    async initialize() {},
+    async destroy() {},
+  });
+  const manager = new SessionManager(config);
+  const fixtures = [
+    { mime: 'application/pdf', name: 'relatorio.pdf' },
+    { mime: 'application/msword', name: 'contrato.doc' },
+    { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'contrato.docx' },
+    { mime: 'application/vnd.ms-excel', name: 'planilha.xls' },
+    { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', name: 'planilha.xlsx' },
+  ];
+  const data = Buffer.from('document-fixture').toString('base64');
+  try {
+    await manager.start();
+    manager.state.status = 'conectado';
+    for (const [index, fixture] of fixtures.entries()) {
+      await handlers.get('message')({
+        fromMe: false,
+        from: 'grupo@g.us',
+        author: '5511999999999@c.us',
+        body: '',
+        type: 'document',
+        hasMedia: true,
+        timestamp: Math.floor(Date.now() / 1000),
+        id: { _serialized: `incoming-document-${index}` },
+        async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
+        async downloadMedia() { return { mimetype: fixture.mime, filename: fixture.name, data }; },
+      });
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const received = events.filter(event => event.type === 'group_message_received');
+    assert.equal(received.length, fixtures.length);
+    assert.deepEqual(received.map(event => event.attachments?.[0]), fixtures.map(fixture => ({
+      nome: fixture.name,
+      mime_type: fixture.mime,
+      tamanho_bytes: Buffer.byteLength(data, 'base64'),
+      data_base64: data,
+    })));
   } finally {
     globalThis.fetch = previousFetch;
     await manager.shutdown();
