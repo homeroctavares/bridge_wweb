@@ -30,12 +30,13 @@ RUN apt-get update \
       libx11-6 \
       libx11-xcb1 \
       libxcb1 \
-      libxcomposite1 \
-      libxdamage1 \
-      libxext6 \
-      libxfixes3 \
-      libxrandr2 \
-      xdg-utils \
+	      libxcomposite1 \
+	      libxdamage1 \
+	      libxext6 \
+	      libxfixes3 \
+	      libxrandr2 \
+	      patch \
+	      xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
