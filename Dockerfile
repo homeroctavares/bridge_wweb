@@ -35,7 +35,6 @@ RUN apt-get update \
       libxext6 \
       libxfixes3 \
       libxrandr2 \
-      patch \
       xdg-utils \
     && rm -rf /var/lib/apt/lists/*
 
