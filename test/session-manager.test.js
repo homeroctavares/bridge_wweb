@@ -331,3 +331,144 @@ test('preserva nome da agenda, citação e alteração de mensagem de grupo', as
     await fs.rm(root, { recursive: true, force: true });
   }
 });
+
+test('não descarta imagem quando o download da mídia falha', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2pharma-media-fallback-test-'));
+  const handlers = new Map();
+  const events = [];
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => {
+    events.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.clientFactory = () => ({
+    on(event, handler) { handlers.set(event, handler); },
+    async initialize() {},
+    async destroy() {},
+  });
+  const manager = new SessionManager(config);
+  try {
+    await manager.start();
+    manager.state.status = 'conectado';
+    await handlers.get('message')({
+      fromMe: false,
+      from: 'grupo@g.us',
+      author: '5511999999999@c.us',
+      body: '',
+      type: 'image',
+      hasMedia: true,
+      _data: { mimetype: 'image/jpeg', filename: 'foto.jpg', size: 2048 },
+      timestamp: Math.floor(Date.now() / 1000),
+      id: { _serialized: 'incoming-image-download-failed' },
+      async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
+      async downloadMedia() { throw new Error('media unavailable in WhatsApp Web'); },
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const received = events.find(event => event.type === 'group_message_received');
+    assert.equal(received.group_id, 'grupo@g.us');
+    assert.deepEqual(received.attachments, [{ nome: 'foto.jpg', mime_type: 'image/jpeg', tamanho_bytes: 2048 }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('encaminha imagem recebida dentro do limite com conteúdo base64 para persistência segura', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-media-ok-'));
+  const previousFetch = globalThis.fetch;
+  const handlers = new Map();
+  const events = [];
+  globalThis.fetch = async (_url, init) => {
+    events.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.clientFactory = () => ({
+    on(event, handler) { handlers.set(event, handler); },
+    async initialize() {},
+    async destroy() {},
+  });
+  const manager = new SessionManager(config);
+  const data = Buffer.from('imagem-de-fixture').toString('base64');
+  try {
+    await manager.start();
+    manager.state.status = 'conectado';
+    await handlers.get('message')({
+      fromMe: false,
+      from: 'grupo@g.us',
+      author: '5511999999999@c.us',
+      body: '',
+      type: 'image',
+      hasMedia: true,
+      timestamp: Math.floor(Date.now() / 1000),
+      id: { _serialized: 'incoming-image-download-ok' },
+      async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
+      async downloadMedia() { return { mimetype: 'image/jpeg', filename: 'foto.jpg', data }; },
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const received = events.find(event => event.type === 'group_message_received');
+    assert.deepEqual(received.attachments, [{
+      nome: 'foto.jpg',
+      mime_type: 'image/jpeg',
+      tamanho_bytes: Buffer.byteLength(data, 'base64'),
+      data_base64: data,
+    }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('preserva metadados e omite bytes quando a mídia recebida possui base64 inválido', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-media-invalid-'));
+  const previousFetch = globalThis.fetch;
+  const handlers = new Map();
+  const events = [];
+  globalThis.fetch = async (_url, init) => {
+    events.push(JSON.parse(init.body));
+    return { ok: true };
+  };
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.clientFactory = () => ({
+    on(event, handler) { handlers.set(event, handler); },
+    async initialize() {},
+    async destroy() {},
+  });
+  const manager = new SessionManager(config);
+  try {
+    await manager.start();
+    manager.state.status = 'conectado';
+    await handlers.get('message')({
+      fromMe: false,
+      from: 'grupo@g.us',
+      author: '5511999999999@c.us',
+      body: '',
+      type: 'image',
+      hasMedia: true,
+      timestamp: Math.floor(Date.now() / 1000),
+      id: { _serialized: 'incoming-image-invalid-base64' },
+      async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
+      async downloadMedia() { return { mimetype: 'image/jpeg', filename: 'foto.jpg', data: 'not-base64' }; },
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const received = events.find(event => event.type === 'group_message_received');
+    assert.deepEqual(received.attachments, [{
+      nome: 'foto.jpg',
+      mime_type: 'image/jpeg',
+      tamanho_bytes: Buffer.byteLength('not-base64', 'base64'),
+    }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
