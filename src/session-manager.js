@@ -34,9 +34,36 @@ function mediaMimeType(message) {
   return byType[String(message?.type || '').toLowerCase()] || 'application/octet-stream';
 }
 
+const mediaFilenameExtensions = Object.freeze({
+  'image/jpeg': 'jpg',
+  'image/png': 'png',
+  'audio/aac': 'aac',
+  'audio/amr': 'amr',
+  'audio/mpeg': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/ogg': 'ogg',
+  'video/mp4': 'mp4',
+  'video/3gpp': '3gp',
+  'application/octet-stream': 'bin',
+});
+
+export function normalizeMediaFileName(value, index = 0, mimeType = 'application/octet-stream') {
+  const fallback = `anexo-${index + 1}`;
+  const raw = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  const safe = raw
+    .replace(/[\u0000-\u001f\u007f/\\]+/g, '_')
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 240)
+    .trim() || fallback;
+  if (/\.[A-Za-z0-9]{1,8}$/.test(safe)) return safe;
+  const extension = mediaFilenameExtensions[String(mimeType).trim().toLowerCase()] || 'bin';
+  const suffix = `.${extension}`;
+  return `${safe.slice(0, Math.max(1, 240 - suffix.length))}${suffix}`;
+}
+
 function mediaFileName(message, index = 0) {
   const declared = message?._data?.filename || message?.filename;
-  return String(declared || `anexo-${index + 1}`).slice(0, 240);
+  return normalizeMediaFileName(declared, index, mediaMimeType(message));
 }
 
 function mediaSizeBytes(message) {
@@ -287,7 +314,11 @@ export class SessionManager {
           });
         }
         attachments.push({
-          nome: String(media.filename || mediaFileName(message, attachments.length)).slice(0, 240),
+          nome: normalizeMediaFileName(
+            media.filename || message?._data?.filename || message?.filename,
+            attachments.length,
+            mimeType,
+          ),
           mime_type: mimeType,
           tamanho_bytes: tamanhoBytes,
           ...(canPersist
