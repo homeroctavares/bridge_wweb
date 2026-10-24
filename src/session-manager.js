@@ -44,19 +44,50 @@ const mediaFilenameExtensions = Object.freeze({
   'audio/ogg': 'ogg',
   'video/mp4': 'mp4',
   'video/3gpp': '3gp',
+  'application/pdf': 'pdf',
+  'application/msword': 'doc',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
+  'application/vnd.ms-excel': 'xls',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': 'xlsx',
+  'application/vnd.ms-powerpoint': 'ppt',
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
+  'text/plain': 'txt',
   'application/octet-stream': 'bin',
+});
+const mediaCompatibleExtensions = Object.freeze({
+  'image/jpeg': new Set(['.jpg', '.jpeg']),
+  'image/png': new Set(['.png']),
+  'audio/aac': new Set(['.aac']),
+  'audio/amr': new Set(['.amr']),
+  'audio/mpeg': new Set(['.mp3']),
+  'audio/mp4': new Set(['.m4a']),
+  'audio/ogg': new Set(['.ogg']),
+  'video/mp4': new Set(['.mp4']),
+  'video/3gpp': new Set(['.3gp']),
+  'application/pdf': new Set(['.pdf']),
+  'application/msword': new Set(['.doc']),
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document': new Set(['.docx']),
+  'application/vnd.ms-excel': new Set(['.xls']),
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': new Set(['.xlsx']),
+  'application/vnd.ms-powerpoint': new Set(['.ppt']),
+  'application/vnd.openxmlformats-officedocument.presentationml.presentation': new Set(['.pptx']),
+  'text/plain': new Set(['.txt']),
 });
 
 export function normalizeMediaFileName(value, index = 0, mimeType = 'application/octet-stream') {
   const fallback = `anexo-${index + 1}`;
   const raw = typeof value === 'string' && value.trim() ? value.trim() : fallback;
-  const safe = raw
+  let safe = raw
     .replace(/[\u0000-\u001f\u007f/\\]+/g, '_')
     .replace(/^\.+|\.+$/g, '')
     .slice(0, 240)
     .trim() || fallback;
-  if (/\.[A-Za-z0-9]{1,8}$/.test(safe)) return safe;
-  const extension = mediaFilenameExtensions[String(mimeType).trim().toLowerCase()] || 'bin';
+  const normalizedMime = String(mimeType).trim().toLowerCase();
+  const existingExtension = safe.match(/\.[A-Za-z0-9]{1,8}$/)?.[0].toLowerCase();
+  const compatibleExtensions = mediaCompatibleExtensions[normalizedMime];
+  if (existingExtension && (!compatibleExtensions || compatibleExtensions.has(existingExtension))) return safe;
+  if (existingExtension && compatibleExtensions) safe = safe.slice(0, -existingExtension.length).trim() || fallback;
+  const extension = mediaFilenameExtensions[normalizedMime] || 'bin';
   const suffix = `.${extension}`;
   return `${safe.slice(0, Math.max(1, 240 - suffix.length))}${suffix}`;
 }
@@ -67,15 +98,47 @@ function mediaFileName(message, index = 0) {
 }
 
 function mediaSizeBytes(message) {
-  const value = Number(message?._data?.size ?? message?.size ?? 0);
-  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+  const value = message?._data?.size ?? message?.size;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
-function incomingMediaLimit(mimeType) {
+export function incomingMediaLimit(mimeType) {
   const normalized = String(mimeType || '').trim().toLowerCase();
-  if (normalized === 'image/jpeg' || normalized === 'image/png') return 5 * 1024 * 1024;
+  if (['image/jpeg', 'image/png'].includes(normalized)) return 5 * 1024 * 1024;
   if (['audio/aac', 'audio/amr', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/mp4', 'video/3gpp'].includes(normalized)) return 16 * 1024 * 1024;
+  if ([
+    'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'application/vnd.ms-excel',
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+  ].includes(normalized)) return 100 * 1024 * 1024;
   return 0;
+}
+
+export function validateOutgoingMediaAttachment(attachment) {
+  const mimeType = typeof attachment?.mime_type === 'string' ? attachment.mime_type.trim().toLowerCase() : '';
+  const fileName = typeof attachment?.nome === 'string' ? attachment.nome.trim().toLowerCase() : '';
+  const extension = fileName.includes('.') ? fileName.slice(fileName.lastIndexOf('.')) : '';
+  const limit = incomingMediaLimit(mimeType);
+  if (!limit || !mediaCompatibleExtensions[mimeType]?.has(extension)) {
+    return { valid: false, message: `O arquivo "${attachment?.nome || ''}" possui MIME ou extensão incompatível.` };
+  }
+  if (!isCanonicalBase64(attachment?.data_base64)) {
+    return { valid: false, message: `O arquivo "${attachment.nome}" não possui conteúdo base64 válido.` };
+  }
+  const bytes = Buffer.from(attachment.data_base64, 'base64');
+  const declaredSize = attachment?.tamanho_bytes;
+  if (typeof declaredSize !== 'number' || !Number.isSafeInteger(declaredSize) || declaredSize <= 0 || declaredSize !== bytes.length) {
+    return { valid: false, message: `O tamanho declarado do arquivo "${attachment.nome}" não corresponde ao conteúdo real.` };
+  }
+  if (bytes.length > limit) {
+    return { valid: false, message: `O arquivo "${attachment.nome}" excede o limite permitido.` };
+  }
+  return { valid: true, tamanho_bytes: bytes.length };
 }
 
 function isCanonicalBase64(value) {
@@ -302,14 +365,15 @@ export class SessionManager {
       if (media?.mimetype) {
         const mimeType = String(media.mimetype).slice(0, 120);
         const dataBase64 = typeof media.data === 'string' ? media.data : '';
-        const tamanhoBytes = Buffer.byteLength(dataBase64, 'base64');
-        const canPersist = isCanonicalBase64(dataBase64) && tamanhoBytes <= incomingMediaLimit(mimeType);
+        const decodedSize = isCanonicalBase64(dataBase64) ? Buffer.byteLength(dataBase64, 'base64') : undefined;
+        const tamanhoBytes = decodedSize ?? mediaSizeBytes(media) ?? mediaSizeBytes(message);
+        const canPersist = decodedSize !== undefined && decodedSize <= incomingMediaLimit(mimeType);
         if (dataBase64.length > 0 && !canPersist) {
           logger.warn('whatsapp_incoming_media_not_forwarded', {
             session_id: SESSION_ID,
             message_id_present: Boolean(messageId),
             mime_type: mimeType,
-            tamanho_bytes: tamanhoBytes,
+            ...(typeof tamanhoBytes === 'number' ? { tamanho_bytes: tamanhoBytes } : {}),
             reason: 'invalid_base64_or_unsupported_or_exceeds_limit',
           });
         }
@@ -320,7 +384,7 @@ export class SessionManager {
             mimeType,
           ),
           mime_type: mimeType,
-          tamanho_bytes: tamanhoBytes,
+          ...(typeof tamanhoBytes === 'number' ? { tamanho_bytes: tamanhoBytes } : {}),
           ...(canPersist
             ? { data_base64: dataBase64 }
             : {}),
@@ -329,10 +393,11 @@ export class SessionManager {
         // O evento não pode ser perdido apenas porque o conteúdo binário ficou
         // indisponível no WhatsApp Web. A aplicação persiste a mensagem como
         // mídia e deixa o arquivo indisponível, sem inventar bytes ou URL.
+        const tamanhoBytes = mediaSizeBytes(message);
         attachments.push({
           nome: mediaFileName(message, attachments.length),
           mime_type: mediaMimeType(message),
-          tamanho_bytes: mediaSizeBytes(message),
+          ...(typeof tamanhoBytes === 'number' ? { tamanho_bytes: tamanhoBytes } : {}),
         });
       }
     }
@@ -514,6 +579,10 @@ export class SessionManager {
   async #sendMessageOnce({ canalGrupoId, texto = '', anexos = [], quotedMessageId = '' }) {
     if (!this.client || this.state.status !== 'conectado') {
       return { accepted: false, message_ids: [], mensagem: 'O envio exige uma sessão WhatsApp conectada.' };
+    }
+    for (const attachment of anexos) {
+      const validation = validateOutgoingMediaAttachment(attachment);
+      if (!validation.valid) return { accepted: false, code: 'INVALID_MEDIA_ATTACHMENT', message_ids: [], mensagem: validation.message };
     }
     const messageIds = [];
     if (texto.trim()) {

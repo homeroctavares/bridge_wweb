@@ -3,6 +3,7 @@ import express from 'express';
 import helmet from 'helmet';
 import { rateLimit } from 'express-rate-limit';
 import { logger } from './logger.js';
+import { validateOutgoingMediaAttachment } from './session-manager.js';
 
 function tokenMatches(received, expected) {
   const left = Buffer.from(received || '');
@@ -18,8 +19,6 @@ function bearerToken(req) {
 export function createApp({ manager, config }) {
   const app = express();
   app.disable('x-powered-by');
-  // Atrás de proxy (Render), confia no X-Forwarded-For para o rate limit identificar o cliente real.
-  if (config.trustProxy > 0) app.set('trust proxy', config.trustProxy);
   app.use(helmet({ contentSecurityPolicy: false }));
   app.use(express.json({ limit: '150mb', strict: true }));
   app.use(rateLimit({ windowMs: config.rateLimitWindowMs, limit: config.rateLimitMax, standardHeaders: 'draft-7', legacyHeaders: false, skip: (req) => req.path === '/healthz' || req.path === '/readyz' }));
@@ -86,9 +85,16 @@ export function createApp({ manager, config }) {
         res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'Informe texto ou ao menos um anexo.' });
         return;
       }
-      if (attachments.some((attachment) => !attachment || typeof attachment.nome !== 'string' || typeof attachment.mime_type !== 'string' || typeof attachment.data_base64 !== 'string' || typeof attachment.legenda !== 'string')) {
+      if (attachments.some((attachment) => !attachment || typeof attachment.nome !== 'string' || typeof attachment.mime_type !== 'string' || typeof attachment.tamanho_bytes !== 'number' || !Number.isSafeInteger(attachment.tamanho_bytes) || attachment.tamanho_bytes <= 0 || typeof attachment.data_base64 !== 'string' || typeof attachment.legenda !== 'string')) {
         res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'Um ou mais anexos são inválidos.' });
         return;
+      }
+      for (const attachment of attachments) {
+        const validation = validateOutgoingMediaAttachment(attachment);
+        if (!validation.valid) {
+          res.status(422).json({ code: 'INVALID_MEDIA_ATTACHMENT', message: validation.message });
+          return;
+        }
       }
       const result = await manager.sendMessage({
         canalGrupoId: payload.canal_grupo_id.trim(),
