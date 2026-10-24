@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { SessionManager, reconnectDelay } from '../src/session-manager.js';
+import { SessionManager, normalizeMediaFileName, reconnectDelay } from '../src/session-manager.js';
 
 function testConfig(root) {
   return {
@@ -34,6 +34,13 @@ test('backoff cresce progressivamente e respeita o teto', () => {
   assert.equal(reconnectDelay(1000, 4000, 2), 2000);
   assert.equal(reconnectDelay(1000, 4000, 3), 4000);
   assert.equal(reconnectDelay(1000, 4000, 20), 4000);
+});
+
+test('normaliza o nome de mídia sem permitir controles, caminhos ou extensão ausente', () => {
+  const filename = normalizeMediaFileName('../foto\r\n', 0, 'image/jpeg');
+  assert.equal(filename, '_foto.jpg');
+  assert.match(filename, /^[^/\\\r\n]+\.jpg$/);
+  assert.equal(normalizeMediaFileName(undefined, 0, 'audio/mpeg'), 'anexo-1.mp3');
 });
 
 test('QR expirado limpa o valor antigo e reinicia o ciclo de pareamento', async () => {
@@ -409,12 +416,12 @@ test('encaminha imagem recebida dentro do limite com conteúdo base64 para persi
       timestamp: Math.floor(Date.now() / 1000),
       id: { _serialized: 'incoming-image-download-ok' },
       async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
-      async downloadMedia() { return { mimetype: 'image/jpeg', filename: 'foto.jpg', data }; },
+      async downloadMedia() { return { mimetype: 'image/jpeg', data }; },
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     const received = events.find(event => event.type === 'group_message_received');
     assert.deepEqual(received.attachments, [{
-      nome: 'foto.jpg',
+      nome: 'anexo-1.jpg',
       mime_type: 'image/jpeg',
       tamanho_bytes: Buffer.byteLength(data, 'base64'),
       data_base64: data,
@@ -457,12 +464,12 @@ test('preserva metadados e omite bytes quando a mídia recebida possui base64 in
       timestamp: Math.floor(Date.now() / 1000),
       id: { _serialized: 'incoming-image-invalid-base64' },
       async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
-      async downloadMedia() { return { mimetype: 'image/jpeg', filename: 'foto.jpg', data: 'not-base64' }; },
+      async downloadMedia() { return { mimetype: 'image/jpeg', data: 'not-base64' }; },
     });
     await new Promise(resolve => setTimeout(resolve, 10));
     const received = events.find(event => event.type === 'group_message_received');
     assert.deepEqual(received.attachments, [{
-      nome: 'foto.jpg',
+      nome: 'anexo-1.jpg',
       mime_type: 'image/jpeg',
       tamanho_bytes: Buffer.byteLength('not-base64', 'base64'),
     }]);
