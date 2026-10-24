@@ -1,5 +1,4 @@
 import fs from 'node:fs/promises';
-import { unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { createHash, createHmac } from 'node:crypto';
 import QRCode from 'qrcode';
@@ -21,6 +20,42 @@ function isoOrNull(value) {
 
 function safeError(error) {
   return error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+}
+
+function mediaMimeType(message) {
+  const declared = message?._data?.mimetype || message?.mimetype;
+  if (typeof declared === 'string' && declared.trim()) return declared.slice(0, 120);
+  const byType = {
+    image: 'image/jpeg',
+    video: 'video/mp4',
+    audio: 'audio/mpeg',
+    document: 'application/octet-stream',
+  };
+  return byType[String(message?.type || '').toLowerCase()] || 'application/octet-stream';
+}
+
+function mediaFileName(message, index = 0) {
+  const declared = message?._data?.filename || message?.filename;
+  return String(declared || `anexo-${index + 1}`).slice(0, 240);
+}
+
+function mediaSizeBytes(message) {
+  const value = Number(message?._data?.size ?? message?.size ?? 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+function incomingMediaLimit(mimeType) {
+  const normalized = String(mimeType || '').trim().toLowerCase();
+  if (normalized === 'image/jpeg' || normalized === 'image/png') return 5 * 1024 * 1024;
+  if (['audio/aac', 'audio/amr', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/mp4', 'video/3gpp'].includes(normalized)) return 16 * 1024 * 1024;
+  return 0;
+}
+
+function isCanonicalBase64(value) {
+  if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return false;
+  if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false;
+  const bytes = Buffer.from(value, 'base64');
+  return bytes.length > 0 && bytes.toString('base64') === value;
 }
 
 function sleep(milliseconds) {
@@ -79,7 +114,6 @@ export class SessionManager {
     };
     if (this.config.chromeExecutablePath) puppeteer.executablePath = this.config.chromeExecutablePath;
 
-    this.#clearStaleBrowserLocks();
     const client = this.clientFactory({
       authStrategy: new LocalAuth({ clientId: this.config.clientId, dataPath: this.config.authPath }),
       puppeteer,
@@ -93,26 +127,6 @@ export class SessionManager {
     } catch (error) {
       await this.#fail('Falha ao inicializar o cliente WhatsApp.', error);
     }
-  }
-
-  /**
-   * O perfil do Chromium fica no disco persistente. Se a instância anterior foi encerrada sem fechar
-   * o navegador (OOM, deploy, reinício), os arquivos Singleton* continuam lá apontando para outro
-   * host, e o Chromium se recusa a abrir o perfil ("profile appears to be in use ... on another
-   * computer"). A bridge roda sempre com uma única instância, então é seguro removê-los antes de iniciar.
-   */
-  #clearStaleBrowserLocks() {
-    const profileDir = path.join(this.config.authPath, `session-${this.config.clientId}`);
-    const removed = [];
-    for (const name of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) {
-      try {
-        unlinkSync(path.join(profileDir, name));
-        removed.push(name);
-      } catch (error) {
-        if (error?.code !== 'ENOENT') logger.warn('browser_lock_cleanup_failed', { session_id: SESSION_ID, file: name, code: error?.code });
-      }
-    }
-    if (removed.length) logger.info('browser_stale_locks_removed', { session_id: SESSION_ID, files: removed });
   }
 
   #bindEvents(client) {
@@ -245,13 +259,49 @@ export class SessionManager {
     }
 
     const attachments = [];
-    if (message.hasMedia && typeof message.downloadMedia === 'function') {
-      const media = await message.downloadMedia();
+    if (message.hasMedia) {
+      let media;
+      if (typeof message.downloadMedia === 'function') {
+        try {
+          media = await message.downloadMedia();
+        } catch (error) {
+          logger.warn('whatsapp_incoming_media_download_failed', {
+            session_id: SESSION_ID,
+            message_id_present: Boolean(messageId),
+            error: safeError(error),
+          });
+        }
+      }
       if (media?.mimetype) {
+        const mimeType = String(media.mimetype).slice(0, 120);
+        const dataBase64 = typeof media.data === 'string' ? media.data : '';
+        const tamanhoBytes = Buffer.byteLength(dataBase64, 'base64');
+        const canPersist = isCanonicalBase64(dataBase64) && tamanhoBytes <= incomingMediaLimit(mimeType);
+        if (dataBase64.length > 0 && !canPersist) {
+          logger.warn('whatsapp_incoming_media_not_forwarded', {
+            session_id: SESSION_ID,
+            message_id_present: Boolean(messageId),
+            mime_type: mimeType,
+            tamanho_bytes: tamanhoBytes,
+            reason: 'invalid_base64_or_unsupported_or_exceeds_limit',
+          });
+        }
         attachments.push({
-          nome: String(media.filename || `anexo-${attachments.length + 1}`).slice(0, 240),
-          mime_type: String(media.mimetype).slice(0, 120),
-          tamanho_bytes: Buffer.byteLength(String(media.data || ''), 'base64'),
+          nome: String(media.filename || mediaFileName(message, attachments.length)).slice(0, 240),
+          mime_type: mimeType,
+          tamanho_bytes: tamanhoBytes,
+          ...(canPersist
+            ? { data_base64: dataBase64 }
+            : {}),
+        });
+      } else {
+        // O evento não pode ser perdido apenas porque o conteúdo binário ficou
+        // indisponível no WhatsApp Web. A aplicação persiste a mensagem como
+        // mídia e deixa o arquivo indisponível, sem inventar bytes ou URL.
+        attachments.push({
+          nome: mediaFileName(message, attachments.length),
+          mime_type: mediaMimeType(message),
+          tamanho_bytes: mediaSizeBytes(message),
         });
       }
     }
