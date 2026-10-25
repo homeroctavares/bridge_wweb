@@ -89,7 +89,7 @@ test('envio protegido valida texto/anexo e delega o payload', async () => {
     body: JSON.stringify({
       canal_grupo_id: 'grupo@g.us',
       texto: 'Fernanda Lima - Administradora - Bom dia',
-      anexos: [{ nome: 'foto.png', mime_type: 'image/png', data_base64: 'ZmFrZQ==', legenda: 'Fernanda Lima - Administradora - Bom dia' }],
+      anexos: [{ nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: 4, data_base64: 'ZmFrZQ==', legenda: 'Fernanda Lima - Administradora - Bom dia' }],
     }),
   });
   assert.equal(response.status, 202);
@@ -99,7 +99,7 @@ test('envio protegido valida texto/anexo e delega o payload', async () => {
     recebido: {
       canalGrupoId: 'grupo@g.us',
       texto: 'Fernanda Lima - Administradora - Bom dia',
-      anexos: [{ nome: 'foto.png', mime_type: 'image/png', data_base64: 'ZmFrZQ==', legenda: 'Fernanda Lima - Administradora - Bom dia' }],
+      anexos: [{ nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: 4, data_base64: 'ZmFrZQ==', legenda: 'Fernanda Lima - Administradora - Bom dia' }],
     },
   });
 
@@ -110,6 +110,26 @@ test('envio protegido valida texto/anexo e delega o payload', async () => {
   });
   assert.equal(quoted.status, 202);
   assert.equal((await quoted.json()).recebido.quotedMessageId, 'incoming-001');
+});
+
+test('envio protegido rejeita conteúdo base64, tamanho declarado e extensão incompatíveis', async () => {
+  const headers = { authorization: `Bearer ${config.bridgeToken}`, 'content-type': 'application/json' };
+  const scenarios = [
+    { nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: 5, data_base64: 'ZmFrZQ==', code: 'INVALID_MEDIA_ATTACHMENT' },
+    { nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: 4, data_base64: 'not-base64', code: 'INVALID_MEDIA_ATTACHMENT' },
+    { nome: 'foto.pdf', mime_type: 'image/png', tamanho_bytes: 4, data_base64: 'ZmFrZQ==', code: 'INVALID_MEDIA_ATTACHMENT' },
+    { nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: '4', data_base64: 'ZmFrZQ==', code: 'INVALID_PAYLOAD' },
+    { nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: true, data_base64: 'ZmFrZQ==', code: 'INVALID_PAYLOAD' },
+  ];
+  for (const anexo of scenarios) {
+    const response = await fetch(`${baseUrl}/v1/messages/send`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ canal_grupo_id: 'grupo@g.us', anexos: [{ ...anexo, legenda: 'fixture' }] }),
+    });
+    assert.equal(response.status, 422);
+    assert.equal((await response.json()).code, anexo.code);
+  }
 });
 
 test('envio protegido encaminha a chave estável de entrega', async () => {

@@ -43,22 +43,31 @@ test('normaliza o nome de mídia sem permitir controles, caminhos ou extensão a
   assert.equal(normalizeMediaFileName(undefined, 0, 'audio/mpeg'), 'anexo-1.mp3');
 });
 
-test('permite imagens e documentos aprovados até 20 MiB', () => {
-  const allowedMimeTypes = [
-    'image/jpeg',
-    'image/png',
+test('aplica os limites por categoria da política de mídia', () => {
+  for (const mimeType of ['image/jpeg', 'image/png']) {
+    assert.equal(incomingMediaLimit(mimeType), 5 * 1024 * 1024, mimeType);
+  }
+  for (const mimeType of ['audio/aac', 'audio/amr', 'audio/mpeg', 'audio/mp4', 'audio/ogg', 'video/mp4', 'video/3gpp']) {
+    assert.equal(incomingMediaLimit(mimeType), 16 * 1024 * 1024, mimeType);
+  }
+  for (const mimeType of [
     'application/pdf',
     'application/msword',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
     'application/vnd.ms-excel',
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-  ];
-  for (const mimeType of allowedMimeTypes) {
-    assert.equal(incomingMediaLimit(mimeType), 20 * 1024 * 1024, mimeType);
+    'application/vnd.ms-powerpoint',
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    'text/plain',
+  ]) {
+    assert.equal(incomingMediaLimit(mimeType), 100 * 1024 * 1024, mimeType);
   }
   assert.equal(incomingMediaLimit('application/zip'), 0);
   assert.equal(normalizeMediaFileName('relatorio', 0, 'application/pdf'), 'relatorio.pdf');
   assert.equal(normalizeMediaFileName('planilha', 1, 'application/vnd.ms-excel'), 'planilha.xls');
+  assert.equal(normalizeMediaFileName('apresentacao', 2, 'application/vnd.ms-powerpoint'), 'apresentacao.ppt');
+  assert.equal(normalizeMediaFileName('notas', 3, 'text/plain'), 'notas.txt');
+  assert.equal(normalizeMediaFileName('arquivo.pdf', 4, 'image/jpeg'), 'arquivo.jpg');
 });
 
 test('QR expirado limpa o valor antigo e reinicia o ciclo de pareamento', async () => {
@@ -135,6 +144,60 @@ test('falha de autenticação publica o evento específico e inicia reconexão',
     assert.equal(events[1].status, 'reconectando');
     assert.equal(events.filter((event) => event.type === 'failure').length, 0);
     assert.equal(manager.status().status, 'reconectando');
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('aguarda o timeout configurado para webhook de documentos grandes', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2pharma-webhook-timeout-test-'));
+  const previousFetch = globalThis.fetch;
+  let aborted = false;
+  globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener('abort', () => {
+      aborted = true;
+      reject(new DOMException('aborted', 'AbortError'));
+    }, { once: true });
+  });
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.eventWebhookTimeoutMs = 20;
+  const manager = new SessionManager(config);
+  manager.state.status = 'conectado';
+  manager.client = {
+    async getChats() { return []; },
+    async destroy() {},
+  };
+  try {
+    const result = await manager.syncGroups();
+    assert.equal(result.accepted, true);
+    assert.equal(aborted, true);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('não silencia rejeição HTTP do webhook e preserva o fluxo da bridge', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2pharma-webhook-http-rejection-test-'));
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = async () => ({ ok: false, status: 422, text: async () => 'corpo não deve ser registrado' });
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  const manager = new SessionManager(config);
+  manager.state.status = 'conectado';
+  manager.client = {
+    async getChats() { return []; },
+    async destroy() {},
+  };
+  try {
+    const result = await manager.syncGroups();
+    assert.equal(result.accepted, true);
   } finally {
     globalThis.fetch = previousFetch;
     await manager.shutdown();
@@ -220,6 +283,7 @@ test('envia texto e anexo ao grupo conectado com legenda', async () => {
       anexos: [{
         nome: 'foto.png',
         mime_type: 'image/png',
+        tamanho_bytes: 4,
         data_base64: 'ZmFrZQ==',
         legenda: 'Fernanda Lima - Administradora - Bom dia',
       }],
@@ -229,6 +293,38 @@ test('envia texto e anexo ao grupo conectado com legenda', async () => {
     assert.equal(sent[0].message, 'Fernanda Lima - Administradora - Bom dia');
     assert.equal(sent[1].message.mimetype, 'image/png');
     assert.equal(sent[1].options.caption, 'Fernanda Lima - Administradora - Bom dia');
+  } finally {
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
+test('valida anexo outbound antes de enviar texto ou mídia', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2pharma-send-invalid-media-test-'));
+  const sent = [];
+  const manager = new SessionManager(testConfig(root));
+  manager.state.status = 'conectado';
+  manager.client = {
+    async sendMessage(...args) { sent.push(args); return { id: { _serialized: `message-${sent.length}` } }; },
+    async destroy() {},
+  };
+  try {
+    const result = await manager.sendMessage({
+      canalGrupoId: 'grupo@g.us',
+      texto: 'Texto não deve ser enviado.',
+      anexos: [{ nome: 'foto.pdf', mime_type: 'image/png', tamanho_bytes: 4, data_base64: 'ZmFrZQ==', legenda: 'fixture' }],
+    });
+    assert.equal(result.accepted, false);
+    assert.equal(result.code, 'INVALID_MEDIA_ATTACHMENT');
+    assert.equal(sent.length, 0);
+    const typeResult = await manager.sendMessage({
+      canalGrupoId: 'grupo@g.us',
+      texto: 'Texto não deve ser enviado.',
+      anexos: [{ nome: 'foto.png', mime_type: 'image/png', tamanho_bytes: '4', data_base64: 'ZmFrZQ==', legenda: 'fixture' }],
+    });
+    assert.equal(typeResult.accepted, false);
+    assert.equal(typeResult.code, 'INVALID_MEDIA_ATTACHMENT');
+    assert.equal(sent.length, 0);
   } finally {
     await manager.shutdown();
     await fs.rm(root, { recursive: true, force: true });
@@ -402,6 +498,47 @@ test('não descarta imagem quando o download da mídia falha', async () => {
   }
 });
 
+test('preserva metadata-only sem tamanho quando o WhatsApp não fornece bytes nem tamanho', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-media-unknown-size-'));
+  const previousFetch = globalThis.fetch;
+  const handlers = new Map();
+  const events = [];
+  globalThis.fetch = async (_url, init) => { events.push(JSON.parse(init.body)); return { ok: true }; };
+  const config = testConfig(root);
+  config.eventWebhookUrl = 'https://console.example/events';
+  config.eventWebhookSecret = 'test-event-secret';
+  config.clientFactory = () => ({
+    on(event, handler) { handlers.set(event, handler); },
+    async initialize() {},
+    async destroy() {},
+  });
+  const manager = new SessionManager(config);
+  try {
+    await manager.start();
+    manager.state.status = 'conectado';
+    await handlers.get('message')({
+      fromMe: false,
+      from: 'grupo@g.us',
+      author: '5511999999999@c.us',
+      body: '',
+      type: 'image',
+      hasMedia: true,
+      _data: { mimetype: 'image/jpeg', filename: 'foto.jpg' },
+      timestamp: Math.floor(Date.now() / 1000),
+      id: { _serialized: 'incoming-image-unknown-size' },
+      async getChat() { return { isGroup: true, id: { _serialized: 'grupo@g.us' } }; },
+      async downloadMedia() { throw new Error('media unavailable in WhatsApp Web'); },
+    });
+    await new Promise(resolve => setTimeout(resolve, 10));
+    const received = events.find(event => event.type === 'group_message_received');
+    assert.deepEqual(received.attachments, [{ nome: 'foto.jpg', mime_type: 'image/jpeg' }]);
+  } finally {
+    globalThis.fetch = previousFetch;
+    await manager.shutdown();
+    await fs.rm(root, { recursive: true, force: true });
+  }
+});
+
 test('encaminha imagem recebida dentro do limite com conteúdo base64 para persistência segura', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-media-ok-'));
   const previousFetch = globalThis.fetch;
@@ -451,7 +588,7 @@ test('encaminha imagem recebida dentro do limite com conteúdo base64 para persi
   }
 });
 
-test('encaminha PDF e documentos Office permitidos com conteúdo base64', async () => {
+test('encaminha documentos permitidos com conteúdo base64', async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'r2bridge-incoming-documents-ok-'));
   const previousFetch = globalThis.fetch;
   const handlers = new Map();
@@ -475,6 +612,9 @@ test('encaminha PDF e documentos Office permitidos com conteúdo base64', async 
     { mime: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', name: 'contrato.docx' },
     { mime: 'application/vnd.ms-excel', name: 'planilha.xls' },
     { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', name: 'planilha.xlsx' },
+    { mime: 'application/vnd.ms-powerpoint', name: 'apresentacao.ppt' },
+    { mime: 'application/vnd.openxmlformats-officedocument.presentationml.presentation', name: 'apresentacao.pptx' },
+    { mime: 'text/plain', name: 'notas.txt' },
   ];
   const data = Buffer.from('document-fixture').toString('base64');
   try {
@@ -548,7 +688,6 @@ test('preserva metadados e omite bytes quando a mídia recebida possui base64 in
     assert.deepEqual(received.attachments, [{
       nome: 'anexo-1.jpg',
       mime_type: 'image/jpeg',
-      tamanho_bytes: Buffer.byteLength('not-base64', 'base64'),
     }]);
   } finally {
     globalThis.fetch = previousFetch;
