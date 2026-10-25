@@ -5,6 +5,9 @@ import 'dotenv/config';
 function integerEnv(name, fallback, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
+  if (!/^\d+$/.test(raw)) {
+    throw new Error(`${name} deve ser um número inteiro entre ${min} e ${max}.`);
+  }
   const value = Number.parseInt(raw, 10);
   if (!Number.isInteger(value) || value < min || value > max) {
     throw new Error(`${name} deve ser um número inteiro entre ${min} e ${max}.`);
@@ -52,14 +55,13 @@ export const config = Object.freeze({
   chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH?.trim() || '',
   headless: process.env.PUPPETEER_HEADLESS !== 'false',
   qrTtlSeconds: integerEnv('QR_TTL_SECONDS', 60, { min: 15, max: 300 }),
-  // Número de proxies reversos à frente da bridge (Render/nginx = 1). 0 desativa.
-  trustProxy: integerEnv('TRUST_PROXY', 0, { min: 0, max: 10 }),
   rateLimitWindowMs: integerEnv('RATE_LIMIT_WINDOW_MS', 60_000, { min: 1_000, max: 3_600_000 }),
   rateLimitMax: integerEnv('RATE_LIMIT_MAX', 60, { min: 5, max: 10_000 }),
   restartBackoffMs: integerEnv('RESTART_BACKOFF_MS', 5_000, { min: 1_000, max: 300_000 }),
   heartbeatIntervalMs: integerEnv('HEARTBEAT_INTERVAL_MS', 15_000, { min: 5_000, max: 300_000 }),
   reconnectBackoffMs: integerEnv('RECONNECT_BACKOFF_MS', 5_000, { min: 1_000, max: 300_000 }),
   reconnectMaxBackoffMs: integerEnv('RECONNECT_MAX_BACKOFF_MS', 60_000, { min: 5_000, max: 900_000 }),
+  eventWebhookTimeoutMs: integerEnv('R2PHARMA_EVENT_WEBHOOK_TIMEOUT_MS', 180_000, { min: 5_000, max: 600_000 }),
   eventWebhookUrl: optionalUrl('R2PHARMA_EVENT_WEBHOOK_URL'),
   eventWebhookSecret: process.env.R2PHARMA_EVENT_WEBHOOK_SECRET?.trim() || '',
 });

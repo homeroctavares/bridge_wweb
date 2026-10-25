@@ -700,7 +700,7 @@ export class SessionManager {
     const body = JSON.stringify({ type, emitted_at: new Date().toISOString(), session_id: SESSION_ID, status: this.state.status, ...details });
     const signature = createHmac('sha256', this.config.eventWebhookSecret).update(body).digest('hex');
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5_000);
+    const timeout = setTimeout(() => controller.abort(), this.config.eventWebhookTimeoutMs ?? 180_000);
     try {
       await fetch(this.config.eventWebhookUrl, { method: 'POST', headers: { 'content-type': 'application/json', 'x-r2pharma-signature': signature }, body, signal: controller.signal });
     } catch (error) {
