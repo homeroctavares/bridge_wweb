@@ -368,13 +368,15 @@ export class SessionManager {
         const decodedSize = isCanonicalBase64(dataBase64) ? Buffer.byteLength(dataBase64, 'base64') : undefined;
         const tamanhoBytes = decodedSize ?? mediaSizeBytes(media) ?? mediaSizeBytes(message);
         const canPersist = decodedSize !== undefined && decodedSize <= incomingMediaLimit(mimeType);
-        if (dataBase64.length > 0 && !canPersist) {
+        if (!canPersist) {
           logger.warn('whatsapp_incoming_media_not_forwarded', {
             session_id: SESSION_ID,
             message_id_present: Boolean(messageId),
             mime_type: mimeType,
             ...(typeof tamanhoBytes === 'number' ? { tamanho_bytes: tamanhoBytes } : {}),
-            reason: 'invalid_base64_or_unsupported_or_exceeds_limit',
+            reason: dataBase64.length > 0
+              ? 'invalid_base64_or_unsupported_or_exceeds_limit'
+              : 'binary_unavailable',
           });
         }
         attachments.push({
@@ -394,6 +396,13 @@ export class SessionManager {
         // indisponível no WhatsApp Web. A aplicação persiste a mensagem como
         // mídia e deixa o arquivo indisponível, sem inventar bytes ou URL.
         const tamanhoBytes = mediaSizeBytes(message);
+        logger.warn('whatsapp_incoming_media_not_forwarded', {
+          session_id: SESSION_ID,
+          message_id_present: Boolean(messageId),
+          mime_type: mediaMimeType(message),
+          ...(typeof tamanhoBytes === 'number' ? { tamanho_bytes: tamanhoBytes } : {}),
+          reason: 'binary_unavailable',
+        });
         attachments.push({
           nome: mediaFileName(message, attachments.length),
           mime_type: mediaMimeType(message),
@@ -702,7 +711,10 @@ export class SessionManager {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.config.eventWebhookTimeoutMs ?? 180_000);
     try {
-      await fetch(this.config.eventWebhookUrl, { method: 'POST', headers: { 'content-type': 'application/json', 'x-r2pharma-signature': signature }, body, signal: controller.signal });
+      const response = await fetch(this.config.eventWebhookUrl, { method: 'POST', headers: { 'content-type': 'application/json', 'x-r2pharma-signature': signature }, body, signal: controller.signal });
+      const responseDetails = { type, http_status: response.status };
+      if (!response.ok) logger.warn('event_webhook_rejected', responseDetails);
+      else logger.info('event_webhook_delivered', responseDetails);
     } catch (error) {
       logger.warn('event_webhook_failed', { type, error: safeError(error) });
     } finally {
