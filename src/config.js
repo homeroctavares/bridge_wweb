@@ -20,13 +20,23 @@ function integerEnv(name, fallback, { min = Number.MIN_SAFE_INTEGER, max = Numbe
   return value;
 }
 
+export function parseAllowAnyGroups(environment = process.env) {
+  const raw = environment.WHATSAPP_ALLOW_ANY_GROUPS?.trim() ?? '';
+  if (!raw) return false;
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  throw new Error('WHATSAPP_ALLOW_ANY_GROUPS deve ser true ou false.');
+}
+
 export function parseAllowedGroupIds(environment = process.env) {
   const nodeEnv = environment.NODE_ENV || 'production';
   const raw = environment.WHATSAPP_ALLOWED_GROUP_IDS?.trim() ?? '';
+  const allowAnyGroups = parseAllowAnyGroups(environment);
   if (!raw) {
     if (nodeEnv === 'test') return new Set(TEST_ALLOWED_GROUP_IDS);
+    if (allowAnyGroups) return new Set();
     if (nodeEnv === 'production') {
-      throw new Error('WHATSAPP_ALLOWED_GROUP_IDS é obrigatório em produção e deve conter ao menos um grupo.');
+      throw new Error('WHATSAPP_ALLOWED_GROUP_IDS é obrigatório em produção e deve conter ao menos um grupo quando WHATSAPP_ALLOW_ANY_GROUPS não está ativo.');
     }
     return new Set();
   }
@@ -42,6 +52,10 @@ export function parseAllowedGroupIds(environment = process.env) {
     throw new Error('WHATSAPP_ALLOWED_GROUP_IDS não pode conter grupos repetidos.');
   }
   return new Set(values);
+}
+
+export function isValidGroupId(value) {
+  return typeof value === 'string' && GROUP_ID_PATTERN.test(value);
 }
 
 function requiredToken() {
@@ -85,6 +99,7 @@ export const config = Object.freeze({
   deliveryLedgerTtlSeconds: integerEnv('WHATSAPP_DELIVERY_LEDGER_TTL_SECONDS', DEFAULT_DELIVERY_LEDGER_TTL_SECONDS, { min: 1, max: 10 * 365 * 24 * 60 * 60 }),
   // O limite cobre entradas confirmadas; estados incertos permanecem como bloqueio fail-closed.
   deliveryLedgerMaxEntries: integerEnv('WHATSAPP_DELIVERY_LEDGER_MAX_ENTRIES', DEFAULT_DELIVERY_LEDGER_MAX_ENTRIES, { min: 1, max: 1_000_000 }),
+  allowAnyGroups: parseAllowAnyGroups(),
   allowedGroupIds: parseAllowedGroupIds(),
   clientId: process.env.WHATSAPP_CLIENT_ID?.trim() || 'r2pharma-principal',
   chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH?.trim() || '',

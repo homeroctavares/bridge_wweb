@@ -5,6 +5,12 @@ import { rateLimit } from 'express-rate-limit';
 import { logger } from './logger.js';
 import { validateOutgoingMediaAttachment } from './session-manager.js';
 
+const GROUP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}@g\.us$/;
+
+function isValidGroupId(value) {
+  return typeof value === 'string' && GROUP_ID_PATTERN.test(value);
+}
+
 function tokenMatches(received, expected) {
   const left = Buffer.from(received || '');
   const right = Buffer.from(expected || '');
@@ -73,7 +79,11 @@ export function createApp({ manager, config }) {
         return;
       }
       const canalGrupoId = payload.canal_grupo_id.trim();
-      if (!(config.allowedGroupIds instanceof Set) || !config.allowedGroupIds.has(canalGrupoId)) {
+      if (!isValidGroupId(canalGrupoId)) {
+        res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'O identificador do grupo deve usar o formato técnico @g.us.' });
+        return;
+      }
+      if (!config.allowAnyGroups && (!(config.allowedGroupIds instanceof Set) || !config.allowedGroupIds.has(canalGrupoId))) {
         res.status(403).json({ code: 'GROUP_NOT_ALLOWED', message: 'O grupo informado não está autorizado para envio.' });
         return;
       }
