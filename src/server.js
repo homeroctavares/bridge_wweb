@@ -72,8 +72,17 @@ export function createApp({ manager, config }) {
         res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'O identificador do grupo é obrigatório.' });
         return;
       }
+      const canalGrupoId = payload.canal_grupo_id.trim();
+      if (!(config.allowedGroupIds instanceof Set) || !config.allowedGroupIds.has(canalGrupoId)) {
+        res.status(403).json({ code: 'GROUP_NOT_ALLOWED', message: 'O grupo informado não está autorizado para envio.' });
+        return;
+      }
       if (typeof payload.delivery_id !== 'undefined' && (typeof payload.delivery_id !== 'string' || !/^[A-Za-z0-9:_-]{1,180}$/.test(payload.delivery_id))) {
         res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'O identificador de entrega é inválido.' });
+        return;
+      }
+      if (typeof payload.anexos !== 'undefined' && !Array.isArray(payload.anexos)) {
+        res.status(422).json({ code: 'INVALID_PAYLOAD', message: 'O campo de anexos deve ser uma lista.' });
         return;
       }
       const attachments = Array.isArray(payload.anexos) ? payload.anexos : [];
@@ -97,7 +106,7 @@ export function createApp({ manager, config }) {
         }
       }
       const result = await manager.sendMessage({
-        canalGrupoId: payload.canal_grupo_id.trim(),
+        canalGrupoId,
         ...(payload.delivery_id ? { deliveryId: payload.delivery_id } : {}),
         texto: payload.texto || '',
         anexos: attachments,
@@ -106,12 +115,23 @@ export function createApp({ manager, config }) {
           : {}),
       });
       res.status(result.accepted === false ? 409 : 202).json(result);
-    } catch (error) { next(error); }
+    } catch (error) {
+      logger.error('whatsapp_message_send_unhandled_error', {
+        error_type: error?.constructor?.name || 'Error',
+        error_code: error?.code || 'SEND_UNHANDLED_ERROR',
+      });
+      res.status(409).json({
+        accepted: false,
+        code: 'DELIVERY_UNCERTAIN',
+        message_ids: [],
+        mensagem: 'A tentativa de envio não pôde ser concluída com segurança. A entrega foi marcada como incerta; não repita automaticamente.',
+      });
+    }
   });
 
   app.use((_req, res) => res.status(404).json({ code: 'NOT_FOUND', message: 'Rota não encontrada.' }));
   app.use((error, _req, res, _next) => {
-    logger.error('http_unhandled_error', { error: error instanceof Error ? error.message : String(error) });
+    logger.error('http_unhandled_error', { error_type: error?.constructor?.name || 'Error', error_code: error?.code || 'INTERNAL_ERROR' });
     res.status(500).json({ code: 'INTERNAL_ERROR', message: 'Erro interno do serviço de sessão.' });
   });
   return app;

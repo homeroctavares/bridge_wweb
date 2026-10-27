@@ -2,6 +2,11 @@ import path from 'node:path';
 import process from 'node:process';
 import 'dotenv/config';
 
+const DEFAULT_DELIVERY_LEDGER_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_DELIVERY_LEDGER_MAX_ENTRIES = 10_000;
+const TEST_ALLOWED_GROUP_IDS = Object.freeze(['grupo@g.us']);
+const GROUP_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,179}@g\.us$/;
+
 function integerEnv(name, fallback, { min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER } = {}) {
   const raw = process.env[name];
   if (raw === undefined || raw === '') return fallback;
@@ -13,6 +18,30 @@ function integerEnv(name, fallback, { min = Number.MIN_SAFE_INTEGER, max = Numbe
     throw new Error(`${name} deve ser um número inteiro entre ${min} e ${max}.`);
   }
   return value;
+}
+
+export function parseAllowedGroupIds(environment = process.env) {
+  const nodeEnv = environment.NODE_ENV || 'production';
+  const raw = environment.WHATSAPP_ALLOWED_GROUP_IDS?.trim() ?? '';
+  if (!raw) {
+    if (nodeEnv === 'test') return new Set(TEST_ALLOWED_GROUP_IDS);
+    if (nodeEnv === 'production') {
+      throw new Error('WHATSAPP_ALLOWED_GROUP_IDS é obrigatório em produção e deve conter ao menos um grupo.');
+    }
+    return new Set();
+  }
+
+  const values = raw.split(',').map((value) => value.trim());
+  if (values.some((value) => !value)) {
+    throw new Error('WHATSAPP_ALLOWED_GROUP_IDS deve ser uma lista CSV sem itens vazios.');
+  }
+  if (values.some((value) => !GROUP_ID_PATTERN.test(value))) {
+    throw new Error('WHATSAPP_ALLOWED_GROUP_IDS contém um identificador de grupo inválido.');
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error('WHATSAPP_ALLOWED_GROUP_IDS não pode conter grupos repetidos.');
+  }
+  return new Set(values);
 }
 
 function requiredToken() {
@@ -41,9 +70,10 @@ function optionalUrl(name, environment = process.env) {
 const rootPath = process.env.WHATSAPP_AUTH_PATH?.trim() || '/data/.wwebjs_auth';
 const deliveryLedgerPath = process.env.WHATSAPP_DELIVERY_LEDGER_PATH?.trim()
   || path.join(path.dirname(rootPath), 'delivery-ledger.json');
+const nodeEnv = process.env.NODE_ENV || 'production';
 
 export const config = Object.freeze({
-  nodeEnv: process.env.NODE_ENV || 'production',
+  nodeEnv,
   host: process.env.HOST || '127.0.0.1',
   port: integerEnv('PORT', 3002, { min: 1, max: 65535 }),
   logLevel: process.env.LOG_LEVEL || 'info',
@@ -51,6 +81,11 @@ export const config = Object.freeze({
   authPath: path.resolve(rootPath),
   deliveryLedgerPath: path.resolve(deliveryLedgerPath),
   groupsPath: path.resolve(process.env.WHATSAPP_GROUPS_PATH?.trim() || path.join(path.dirname(rootPath), 'groups.json')),
+  // Entradas confirmadas expiram após 30 dias; estados incertos nunca são removidos por TTL.
+  deliveryLedgerTtlSeconds: integerEnv('WHATSAPP_DELIVERY_LEDGER_TTL_SECONDS', DEFAULT_DELIVERY_LEDGER_TTL_SECONDS, { min: 1, max: 10 * 365 * 24 * 60 * 60 }),
+  // O limite cobre entradas confirmadas; estados incertos permanecem como bloqueio fail-closed.
+  deliveryLedgerMaxEntries: integerEnv('WHATSAPP_DELIVERY_LEDGER_MAX_ENTRIES', DEFAULT_DELIVERY_LEDGER_MAX_ENTRIES, { min: 1, max: 1_000_000 }),
+  allowedGroupIds: parseAllowedGroupIds(),
   clientId: process.env.WHATSAPP_CLIENT_ID?.trim() || 'r2pharma-principal',
   chromeExecutablePath: process.env.CHROME_EXECUTABLE_PATH?.trim() || '',
   headless: process.env.PUPPETEER_HEADLESS !== 'false',

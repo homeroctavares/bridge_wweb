@@ -7,6 +7,9 @@ import { logger } from './logger.js';
 
 const { Client, LocalAuth, MessageMedia } = whatsappWeb;
 const SESSION_ID = 'principal';
+const DEFAULT_DELIVERY_LEDGER_TTL_SECONDS = 30 * 24 * 60 * 60;
+const DEFAULT_DELIVERY_LEDGER_MAX_ENTRIES = 10_000;
+const DELIVERY_STATUSES = new Set(['confirmed', 'uncertain', 'in_progress']);
 export const INDIVIDUAL_CHAT_RESPONSE = 'Número disponível apenas para atendimento via grupo. Por favor, encaminhe sua mensagem no grupo correspondente. Obrigado!';
 
 export function reconnectDelay(baseMs, maxMs, consecutiveFailures) {
@@ -20,6 +23,19 @@ function isoOrNull(value) {
 
 function safeError(error) {
   return error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+}
+
+function ledgerTtlMs(runtimeConfig) {
+  const seconds = Number.isSafeInteger(runtimeConfig.deliveryLedgerTtlSeconds)
+    ? runtimeConfig.deliveryLedgerTtlSeconds
+    : DEFAULT_DELIVERY_LEDGER_TTL_SECONDS;
+  return seconds * 1000;
+}
+
+function ledgerMaxEntries(runtimeConfig) {
+  return Number.isSafeInteger(runtimeConfig.deliveryLedgerMaxEntries)
+    ? runtimeConfig.deliveryLedgerMaxEntries
+    : DEFAULT_DELIVERY_LEDGER_MAX_ENTRIES;
 }
 
 function mediaMimeType(message) {
@@ -141,6 +157,11 @@ export function validateOutgoingMediaAttachment(attachment) {
   return { valid: true, tamanho_bytes: bytes.length };
 }
 
+function shouldSendMediaAsDocument(mimeType) {
+  return String(mimeType || '').trim().toLowerCase().startsWith('application/')
+    || String(mimeType || '').trim().toLowerCase() === 'text/plain';
+}
+
 function isCanonicalBase64(value) {
   if (typeof value !== 'string' || value.length === 0 || value.length % 4 !== 0) return false;
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(value)) return false;
@@ -162,6 +183,7 @@ export class SessionManager {
     this.deliveryLedger = new Map();
     this.deliveryInFlight = new Map();
     this.deliveryLedgerWrite = Promise.resolve();
+    this.deliveryLedgerError = null;
     this.deliveryLedgerReady = this.#loadDeliveryLedger();
     this.heartbeatTimer = setInterval(() => {
       this.state.ultimoHeartbeatEm = new Date().toISOString();
@@ -547,23 +569,99 @@ export class SessionManager {
     return this.config.deliveryLedgerPath || path.join(path.dirname(this.config.authPath), 'delivery-ledger.json');
   }
 
+  #pruneDeliveryLedger(now = Date.now()) {
+    const ttl = ledgerTtlMs(this.config);
+    const maxEntries = ledgerMaxEntries(this.config);
+    const removed = { expired: 0, over_limit: 0 };
+
+    for (const [deliveryId, entry] of this.deliveryLedger) {
+      if (entry.status !== 'confirmed') continue;
+      if (now - Date.parse(entry.recorded_at) >= ttl) {
+        this.deliveryLedger.delete(deliveryId);
+        removed.expired += 1;
+      }
+    }
+
+    const protectedCount = [...this.deliveryLedger.values()].filter((entry) => entry.status !== 'confirmed').length;
+    const confirmedCapacity = Math.max(0, maxEntries - protectedCount);
+    const confirmed = [...this.deliveryLedger.entries()]
+      .filter(([, entry]) => entry.status === 'confirmed')
+      .sort(([leftId, left], [rightId, right]) => {
+        const byDate = Date.parse(right.recorded_at) - Date.parse(left.recorded_at);
+        if (byDate) return byDate;
+        return leftId === rightId ? 0 : (leftId < rightId ? -1 : 1);
+      });
+    for (const [deliveryId] of confirmed.slice(confirmedCapacity)) {
+      this.deliveryLedger.delete(deliveryId);
+      removed.over_limit += 1;
+    }
+
+    return { ...removed, changed: removed.expired > 0 || removed.over_limit > 0 };
+  }
+
+  #serializedDeliveryLedger() {
+    const entregas = Object.fromEntries([...this.deliveryLedger.entries()].sort(([left], [right]) => (
+      left === right ? 0 : (left < right ? -1 : 1)
+    )));
+    return JSON.stringify({ atualizado_em: new Date().toISOString(), entregas }, null, 2);
+  }
+
+  async #writeDeliveryLedger() {
+    const ledgerPath = this.#deliveryLedgerPath();
+    await fs.mkdir(path.dirname(ledgerPath), { recursive: true });
+    const temporaryPath = `${ledgerPath}.${process.pid}.tmp`;
+    try {
+      await fs.writeFile(temporaryPath, this.#serializedDeliveryLedger(), { mode: 0o600 });
+      await fs.rename(temporaryPath, ledgerPath);
+    } catch (error) {
+      await fs.rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+
   async #loadDeliveryLedger() {
     try {
       const raw = await fs.readFile(this.#deliveryLedgerPath(), 'utf8');
       const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && parsed.entregas && typeof parsed.entregas === 'object') {
-        for (const [key, value] of Object.entries(parsed.entregas)) {
-          if (typeof key === 'string' && value && typeof value === 'object' && typeof value.fingerprint === 'string' && Array.isArray(value.message_ids)) {
-            this.deliveryLedger.set(key, {
-              fingerprint: value.fingerprint,
-              message_ids: value.message_ids.filter((id) => typeof id === 'string').slice(0, 20),
-              recorded_at: typeof value.recorded_at === 'string' ? value.recorded_at : new Date().toISOString(),
-            });
-          }
+      if (!parsed || typeof parsed !== 'object' || !parsed.entregas || typeof parsed.entregas !== 'object' || Array.isArray(parsed.entregas)) {
+        throw new Error('delivery ledger shape is invalid');
+      }
+      const loadedEntries = new Map();
+      for (const [key, value] of Object.entries(parsed.entregas)) {
+        if (!/^[A-Za-z0-9:_-]{1,180}$/.test(key) || !value || typeof value !== 'object' || Array.isArray(value)) throw new Error('delivery ledger entry is invalid');
+        const status = value.status;
+        const messageIds = value.message_ids;
+        if (typeof value.fingerprint !== 'string' || value.fingerprint.length < 16 || !DELIVERY_STATUSES.has(status) || !Array.isArray(messageIds) || messageIds.length > 20 || messageIds.some((id) => typeof id !== 'string' || id.length === 0)) {
+          throw new Error('delivery ledger entry fields are invalid');
         }
+        if (status === 'confirmed' && messageIds.length === 0) throw new Error('confirmed delivery has no message ids');
+        const recordedAt = typeof value.recorded_at === 'string' ? Date.parse(value.recorded_at) : Number.NaN;
+        if (!Number.isFinite(recordedAt)) throw new Error('delivery ledger timestamp is invalid');
+        loadedEntries.set(key, {
+          fingerprint: value.fingerprint,
+          status,
+          message_ids: [...messageIds],
+          recorded_at: new Date(recordedAt).toISOString(),
+        });
+      }
+      this.deliveryLedger = loadedEntries;
+      const pruned = this.#pruneDeliveryLedger();
+      if (pruned.changed) {
+        await this.#writeDeliveryLedger();
+        logger.info('whatsapp_delivery_ledger_compacted', {
+          expired_entries: pruned.expired,
+          over_limit_entries: pruned.over_limit,
+          remaining_entries: this.deliveryLedger.size,
+        });
       }
     } catch (error) {
-      if (error?.code !== 'ENOENT') logger.warn('whatsapp_delivery_ledger_read_warning', { error: safeError(error) });
+      if (error?.code !== 'ENOENT') {
+        this.deliveryLedgerError = error;
+        logger.warn('whatsapp_delivery_ledger_read_warning', {
+          error_type: error?.constructor?.name || 'Error',
+          error_code: error?.code || 'LEDGER_READ_FAILED',
+        });
+      }
     }
   }
 
@@ -573,58 +671,157 @@ export class SessionManager {
 
   async #persistDelivery(deliveryId, value) {
     this.deliveryLedger.set(deliveryId, value);
-    this.deliveryLedgerWrite = this.deliveryLedgerWrite.then(async () => {
-      const ledgerPath = this.#deliveryLedgerPath();
-      await fs.mkdir(path.dirname(ledgerPath), { recursive: true });
-      const temporaryPath = `${ledgerPath}.${process.pid}.tmp`;
-      await fs.writeFile(temporaryPath, JSON.stringify({ atualizado_em: new Date().toISOString(), entregas: Object.fromEntries(this.deliveryLedger) }, null, 2), { mode: 0o600 });
-      await fs.rename(temporaryPath, ledgerPath);
-    }).catch((error) => {
-      logger.error('whatsapp_delivery_ledger_write_failure', { error: safeError(error) });
+    const queuedWrite = this.deliveryLedgerWrite.then(async () => {
+      const pruned = this.#pruneDeliveryLedger();
+      await this.#writeDeliveryLedger();
+      if (pruned.changed) {
+        logger.info('whatsapp_delivery_ledger_compacted', {
+          expired_entries: pruned.expired,
+          over_limit_entries: pruned.over_limit,
+          remaining_entries: this.deliveryLedger.size,
+        });
+      }
     });
-    await this.deliveryLedgerWrite;
+    this.deliveryLedgerWrite = queuedWrite.catch((error) => {
+      logger.error('whatsapp_delivery_ledger_write_failure', { error_type: error?.constructor?.name || 'Error', error_code: error?.code || 'LEDGER_WRITE_FAILED' });
+      return undefined;
+    });
+    try {
+      await queuedWrite;
+      this.deliveryLedgerError = null;
+    } catch (error) {
+      this.deliveryLedgerError = error;
+      throw error;
+    }
   }
 
   async #sendMessageOnce({ canalGrupoId, texto = '', anexos = [], quotedMessageId = '' }) {
     if (!this.client || this.state.status !== 'conectado') {
       return { accepted: false, message_ids: [], mensagem: 'O envio exige uma sessão WhatsApp conectada.' };
     }
+    if (!String(texto).trim() && anexos.length === 0) {
+      return { accepted: false, code: 'EMPTY_MESSAGE', message_ids: [], mensagem: 'Informe texto ou ao menos um anexo para enviar.' };
+    }
     for (const attachment of anexos) {
       const validation = validateOutgoingMediaAttachment(attachment);
       if (!validation.valid) return { accepted: false, code: 'INVALID_MEDIA_ATTACHMENT', message_ids: [], mensagem: validation.message };
     }
     const messageIds = [];
-    if (texto.trim()) {
-      const message = await this.client.sendMessage(canalGrupoId, texto, quotedMessageId ? { quotedMessageId } : {});
-      if (message?.id?._serialized) messageIds.push(String(message.id._serialized));
+    try {
+      if (texto.trim()) {
+        const message = await this.client.sendMessage(canalGrupoId, texto, quotedMessageId ? { quotedMessageId } : {});
+        if (!message?.id?._serialized) throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
+        messageIds.push(String(message.id._serialized));
+      }
+      for (const attachment of anexos) {
+        const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.nome);
+        const options = {
+          caption: attachment.legenda,
+          ...(shouldSendMediaAsDocument(attachment.mime_type) ? { sendMediaAsDocument: true } : {}),
+          ...(quotedMessageId ? { quotedMessageId } : {}),
+        };
+        const message = await this.client.sendMessage(canalGrupoId, media, options);
+        if (!message?.id?._serialized) throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
+        messageIds.push(String(message.id._serialized));
+      }
+      await this.#emitEvent('message_sent', { group_id: canalGrupoId, messages_count: messageIds.length, attachments_count: anexos.length });
+      logger.info('whatsapp_message_sent', { session_id: SESSION_ID, messages_count: messageIds.length, attachments_count: anexos.length });
+      return { accepted: true, message_ids: messageIds, mensagem: 'Mensagem enviada ao grupo.' };
+    } catch (error) {
+      logger.error('whatsapp_message_send_failure', {
+        session_id: SESSION_ID,
+        group_id_present: Boolean(canalGrupoId),
+        attachments_count: anexos.length,
+        quoted: Boolean(quotedMessageId),
+        error_type: error?.constructor?.name || 'Error',
+        error_code: error?.code || 'SEND_FAILED',
+      });
+      await this.#emitEvent('message_send_failure', {
+        attachments_count: anexos.length,
+        quoted: Boolean(quotedMessageId),
+      });
+      return {
+        accepted: false,
+        code: messageIds.length > 0 ? 'DELIVERY_UNCERTAIN' : (error?.code === 'MESSAGE_ID_MISSING' ? 'MESSAGE_ID_MISSING' : 'SEND_FAILED'),
+        message_ids: messageIds,
+        mensagem: messageIds.length > 0
+          ? 'O envio ficou parcialmente confirmado. Não repita automaticamente; reconcilie a entrega antes de tentar novamente.'
+          : error?.code === 'MESSAGE_ID_MISSING'
+            ? 'O WhatsApp não confirmou o identificador da mensagem. Nenhuma confirmação de entrega foi registrada.'
+            : 'O WhatsApp não aceitou o envio da resposta. Nenhuma confirmação de entrega foi registrada; revise o arquivo e tente novamente.',
+      };
     }
-    for (const attachment of anexos) {
-      const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.nome);
-      const message = await this.client.sendMessage(canalGrupoId, media, { caption: attachment.legenda, ...(quotedMessageId ? { quotedMessageId } : {}) });
-      if (message?.id?._serialized) messageIds.push(String(message.id._serialized));
-    }
-    await this.#emitEvent('message_sent', { group_id: canalGrupoId, messages_count: messageIds.length, attachments_count: anexos.length });
-    logger.info('whatsapp_message_sent', { session_id: SESSION_ID, messages_count: messageIds.length, attachments_count: anexos.length });
-    return { accepted: true, message_ids: messageIds, mensagem: 'Mensagem enviada ao grupo.' };
   }
 
   async sendMessage({ canalGrupoId, texto = '', anexos = [], quotedMessageId = '', deliveryId = '' }) {
     if (!deliveryId) return this.#sendMessageOnce({ canalGrupoId, texto, anexos, quotedMessageId });
     await this.deliveryLedgerReady;
+    if (this.deliveryLedgerError) return { accepted: false, code: 'DELIVERY_LEDGER_UNAVAILABLE', message_ids: [], mensagem: 'A entrega idempotente está temporariamente indisponível; nenhuma mensagem foi enviada.' };
     const fingerprint = this.#deliveryFingerprint({ canalGrupoId, texto, anexos, quotedMessageId });
     const stored = this.deliveryLedger.get(deliveryId);
     if (stored) {
       if (stored.fingerprint !== fingerprint) return { accepted: false, code: 'DELIVERY_KEY_CONFLICT', message_ids: [], mensagem: 'A chave de entrega já foi usada com outro conteúdo.' };
+      if (stored.status === 'uncertain' || stored.status === 'in_progress') return { accepted: false, code: 'DELIVERY_UNCERTAIN', message_ids: [...stored.message_ids], mensagem: 'A entrega anterior ficou indeterminada; reconcilie a entrega antes de tentar novamente.' };
       return { accepted: true, message_ids: [...stored.message_ids], mensagem: 'Entrega já confirmada anteriormente.' };
     }
     const active = this.deliveryInFlight.get(deliveryId);
     if (active) return active.fingerprint === fingerprint ? active.promise : { accepted: false, code: 'DELIVERY_KEY_CONFLICT', message_ids: [], mensagem: 'A chave de entrega já está em uso com outro conteúdo.' };
-    const promise = this.#sendMessageOnce({ canalGrupoId, texto, anexos, quotedMessageId }).then(async (result) => {
+    const promise = (async () => {
+      try {
+        await this.#persistDelivery(deliveryId, { fingerprint, status: 'in_progress', message_ids: [], recorded_at: new Date().toISOString() });
+      } catch (error) {
+        logger.error('whatsapp_delivery_reservation_failure', {
+          session_id: SESSION_ID,
+          error_type: error?.constructor?.name || 'Error',
+          error_code: error?.code || 'DELIVERY_RESERVATION_FAILED',
+        });
+        return {
+          accepted: false,
+          code: 'DELIVERY_LEDGER_UNAVAILABLE',
+          message_ids: [],
+          mensagem: 'A entrega idempotente está temporariamente indisponível; nenhuma mensagem foi enviada.',
+        };
+      }
+
+      let result;
+      try {
+        result = await this.#sendMessageOnce({ canalGrupoId, texto, anexos, quotedMessageId });
+      } catch (error) {
+        logger.error('whatsapp_delivery_dispatch_failure', {
+          session_id: SESSION_ID,
+          error_type: error?.constructor?.name || 'Error',
+          error_code: error?.code || 'DELIVERY_DISPATCH_FAILED',
+        });
+        this.deliveryLedger.set(deliveryId, {
+          fingerprint,
+          status: 'uncertain',
+          message_ids: [],
+          recorded_at: new Date().toISOString(),
+        });
+        return {
+          accepted: false,
+          code: 'DELIVERY_UNCERTAIN',
+          message_ids: [],
+          mensagem: 'A tentativa de envio ficou indeterminada. Não repita automaticamente; reconcilie a entrega antes de tentar novamente.',
+        };
+      }
       if (result.accepted) {
-        await this.#persistDelivery(deliveryId, { fingerprint, message_ids: result.message_ids || [], recorded_at: new Date().toISOString() });
+        try {
+          await this.#persistDelivery(deliveryId, { fingerprint, status: 'confirmed', message_ids: result.message_ids || [], recorded_at: new Date().toISOString() });
+        } catch (error) {
+          this.deliveryLedger.set(deliveryId, { fingerprint, status: 'uncertain', message_ids: result.message_ids || [], recorded_at: new Date().toISOString() });
+          return { accepted: false, code: 'DELIVERY_UNCERTAIN', message_ids: result.message_ids || [], mensagem: 'A mensagem pode ter sido enviada, mas a confirmação idempotente não foi persistida. Não repita automaticamente.' };
+        }
+      } else {
+        try {
+          await this.#persistDelivery(deliveryId, { fingerprint, status: 'uncertain', message_ids: result.message_ids || [], recorded_at: new Date().toISOString() });
+        } catch {
+          this.deliveryLedger.set(deliveryId, { fingerprint, status: 'uncertain', message_ids: result.message_ids || [], recorded_at: new Date().toISOString() });
+        }
+        return { ...result, code: 'DELIVERY_UNCERTAIN', mensagem: result.message_ids?.length ? 'O envio ficou parcialmente confirmado. Não repita automaticamente; reconcilie a entrega antes de tentar novamente.' : 'A entrega ficou indeterminada; reconcilie a entrega antes de tentar novamente.' };
       }
       return result;
-    });
+    })();
     this.deliveryInFlight.set(deliveryId, { fingerprint, promise });
     try {
       return await promise;
