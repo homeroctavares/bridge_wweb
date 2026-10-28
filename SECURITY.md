@@ -2,7 +2,7 @@
 
 ## Estado da auditoria
 
-Na validação deste pacote em 23 de outubro de 2026, `npm audit --omit=dev --audit-level=high` terminou com código 1 e reportou 9 vulnerabilidades altas e 1 moderada na árvore transitiva instalada. O histórico de 19 de setembro de 2026 também havia apontado vulnerabilidades altas na cadeia `whatsapp-web.js@1.34.7 → puppeteer@24.38.0 → @puppeteer/browsers → extract-zip` e componentes associados. A correção automática do npm propõe alterações forçadas que não foram validadas para o comportamento do WhatsApp Web.
+Na instalação limpa desta entrega, `npm audit --omit=dev` reportou 14 vulnerabilidades transitivas: 2 moderadas e 12 altas, sem críticas, principalmente na cadeia `whatsapp-web.js@1.34.7 → puppeteer@24.38.0 → @puppeteer/browsers → extract-zip` e componentes associados. A correção automática do npm propõe uma alteração forçada de versão que não foi validada para o comportamento do WhatsApp Web; a versão atual foi mantida por decisão do owner.
 
 Esse resultado é um **risco residual bloqueador para declarar produção aprovada**, não um item a ocultar. O cliente deve obter revisão de segurança e decidir entre aceitar temporariamente o risco com controles compensatórios ou aguardar atualização compatível do fornecedor.
 
