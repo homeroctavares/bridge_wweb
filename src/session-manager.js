@@ -785,7 +785,11 @@ export class SessionManager {
       for (const attachment of anexos) {
         const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.nome);
         const options = {
-          waitUntilMsgSent: true,
+          // The media confirmation promise in the current WhatsApp Web build can
+          // throw MESSAGE_ID_MISSING after the message has been accepted locally.
+          // The patched return path still resolves the model/ID; do not turn the
+          // internal confirmation lookup into a false send failure.
+          waitUntilMsgSent: false,
           caption: attachment.legenda,
           ...(shouldSendMediaAsDocument(attachment.mime_type) ? { sendMediaAsDocument: true } : {}),
           ...(quotedMessageId ? { quotedMessageId } : {}),
@@ -797,7 +801,7 @@ export class SessionManager {
           group_id_present: Boolean(canalGrupoId),
           attachments_count: anexos.length,
           quoted: Boolean(quotedMessageId),
-          wait_until_msg_sent: true,
+          wait_until_msg_sent: false,
         });
         const message = await this.client.sendMessage(canalGrupoId, media, options);
         sendPhase = 'client_returned_media';
@@ -817,6 +821,7 @@ export class SessionManager {
       logger.info('whatsapp_message_sent', { session_id: SESSION_ID, messages_count: messageIds.length, attachments_count: anexos.length });
       return { accepted: true, message_ids: messageIds, mensagem: 'Mensagem enviada ao grupo.' };
     } catch (error) {
+      const errorCode = outboundErrorCode(error);
       logger.error('whatsapp_message_send_failure', {
         session_id: SESSION_ID,
         group_id_present: Boolean(canalGrupoId),
@@ -824,23 +829,23 @@ export class SessionManager {
         quoted: Boolean(quotedMessageId),
         send_phase: sendPhase,
         error_type: error?.constructor?.name || 'Error',
-        error_code: outboundErrorCode(error),
+        error_code: errorCode,
         error_message: safeError(error),
       });
       await this.#emitEvent('message_send_failure', {
         attachments_count: anexos.length,
         quoted: Boolean(quotedMessageId),
         message_ids_count: messageIds.length,
-        error_code: outboundErrorCode(error),
+        error_code: errorCode,
         error_message: safeError(error),
       });
       return {
         accepted: false,
-        code: messageIds.length > 0 ? 'DELIVERY_UNCERTAIN' : (error?.code === 'MESSAGE_ID_MISSING' ? 'MESSAGE_ID_MISSING' : 'SEND_FAILED'),
+        code: messageIds.length > 0 ? 'DELIVERY_UNCERTAIN' : errorCode,
         message_ids: messageIds,
         mensagem: messageIds.length > 0
           ? 'O envio ficou parcialmente confirmado. Não repita automaticamente; reconcilie a entrega antes de tentar novamente.'
-          : error?.code === 'MESSAGE_ID_MISSING'
+          : errorCode === 'MESSAGE_ID_MISSING'
             ? 'O WhatsApp não confirmou o identificador da mensagem. Nenhuma confirmação de entrega foi registrada.'
             : 'O WhatsApp não aceitou o envio da resposta. Nenhuma confirmação de entrega foi registrada; revise o arquivo e tente novamente.',
       };
