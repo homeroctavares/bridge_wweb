@@ -21,8 +21,34 @@ function isoOrNull(value) {
   return value ? new Date(value).toISOString() : null;
 }
 
+function rawErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
+}
+
 function safeError(error) {
-  return error instanceof Error ? error.message.slice(0, 240) : String(error).slice(0, 240);
+  const raw = rawErrorMessage(error);
+  const normalized = raw.toLowerCase();
+  const category = normalized.includes('data passed to getter must include an id property') || normalized.includes('message id missing')
+    ? 'WHATSAPP_WEB_MISSING_MESSAGE_ID'
+    : normalized.includes('execution context was destroyed') || normalized.includes('target closed')
+      ? 'WHATSAPP_WEB_CONTEXT_CLOSED'
+      : normalized.includes('timeout') || normalized.includes('timed out') || normalized.includes('abort')
+        ? 'WHATSAPP_WEB_TIMEOUT'
+        : normalized.includes('not connected') || normalized.includes('not ready') || normalized.includes('session closed')
+          ? 'WHATSAPP_WEB_NOT_READY'
+          : normalized.includes('media') || normalized.includes('upload') || normalized.includes('document') || normalized.includes('sendmessage')
+            ? 'WHATSAPP_WEB_MEDIA_SEND_REJECTED'
+            : 'WHATSAPP_WEB_ERROR';
+  const fingerprint = createHash('sha256').update(raw).digest('hex').slice(0, 16);
+  return `${category}#${fingerprint}`;
+}
+
+function outboundErrorCode(error) {
+  const explicit = typeof error?.code === 'string' ? error.code : '';
+  if (explicit === 'MESSAGE_ID_MISSING') return explicit;
+  const normalized = rawErrorMessage(error).toLowerCase();
+  if (normalized.includes('data passed to getter must include an id property') || normalized.includes('message id missing')) return 'MESSAGE_ID_MISSING';
+  return 'SEND_FAILED';
 }
 
 function ledgerTtlMs(runtimeConfig) {
@@ -734,11 +760,15 @@ export class SessionManager {
         attachments_count: anexos.length,
         quoted: Boolean(quotedMessageId),
         error_type: error?.constructor?.name || 'Error',
-        error_code: error?.code || 'SEND_FAILED',
+        error_code: outboundErrorCode(error),
+        error_message: safeError(error),
       });
       await this.#emitEvent('message_send_failure', {
         attachments_count: anexos.length,
         quoted: Boolean(quotedMessageId),
+        message_ids_count: messageIds.length,
+        error_code: outboundErrorCode(error),
+        error_message: safeError(error),
       });
       return {
         accepted: false,
