@@ -51,6 +51,26 @@ function outboundErrorCode(error) {
   return 'SEND_FAILED';
 }
 
+export function outboundMessageIdDiagnostics(message) {
+  const id = message?.id;
+  const serialized = id?._serialized;
+  const dollarOne = id?.$1;
+  return {
+    returned_message: Boolean(message),
+    id_object_present: Boolean(id),
+    serialized_type: typeof serialized,
+    serialized_nonempty: typeof serialized === 'string' && Boolean(serialized.trim()),
+    dollar_one_type: typeof dollarOne,
+    dollar_one_nonempty: typeof dollarOne === 'string' && Boolean(dollarOne.trim()),
+  };
+}
+
+function outboundMessageId(message) {
+  const candidates = [message?.id?._serialized, message?.id?.$1];
+  const value = candidates.find((candidate) => typeof candidate === 'string' && candidate.trim());
+  return value ? value.trim() : '';
+}
+
 function ledgerTtlMs(runtimeConfig) {
   const seconds = Number.isSafeInteger(runtimeConfig.deliveryLedgerTtlSeconds)
     ? runtimeConfig.deliveryLedgerTtlSeconds
@@ -733,22 +753,65 @@ export class SessionManager {
       if (!validation.valid) return { accepted: false, code: 'INVALID_MEDIA_ATTACHMENT', message_ids: [], mensagem: validation.message };
     }
     const messageIds = [];
+    let sendPhase = 'not_started';
     try {
       if (texto.trim()) {
-        const message = await this.client.sendMessage(canalGrupoId, texto, quotedMessageId ? { quotedMessageId } : {});
-        if (!message?.id?._serialized) throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
-        messageIds.push(String(message.id._serialized));
+        sendPhase = 'calling_client_text';
+        logger.info('whatsapp_message_send_started', {
+          session_id: SESSION_ID,
+          content_type: 'text',
+          group_id_present: Boolean(canalGrupoId),
+          attachments_count: anexos.length,
+          quoted: Boolean(quotedMessageId),
+          wait_until_msg_sent: true,
+        });
+        const message = await this.client.sendMessage(canalGrupoId, texto, {
+          waitUntilMsgSent: true,
+          ...(quotedMessageId ? { quotedMessageId } : {}),
+        });
+        sendPhase = 'client_returned_text';
+        logger.info('whatsapp_message_send_returned', {
+          session_id: SESSION_ID,
+          content_type: 'text',
+          ...outboundMessageIdDiagnostics(message),
+        });
+        const messageId = outboundMessageId(message);
+        if (!messageId) {
+          sendPhase = 'returned_without_id_text';
+          throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
+        }
+        messageIds.push(messageId);
       }
       for (const attachment of anexos) {
         const media = new MessageMedia(attachment.mime_type, attachment.data_base64, attachment.nome);
         const options = {
+          waitUntilMsgSent: true,
           caption: attachment.legenda,
           ...(shouldSendMediaAsDocument(attachment.mime_type) ? { sendMediaAsDocument: true } : {}),
           ...(quotedMessageId ? { quotedMessageId } : {}),
         };
+        sendPhase = 'calling_client_media';
+        logger.info('whatsapp_message_send_started', {
+          session_id: SESSION_ID,
+          content_type: shouldSendMediaAsDocument(attachment.mime_type) ? 'document' : 'media',
+          group_id_present: Boolean(canalGrupoId),
+          attachments_count: anexos.length,
+          quoted: Boolean(quotedMessageId),
+          wait_until_msg_sent: true,
+        });
         const message = await this.client.sendMessage(canalGrupoId, media, options);
-        if (!message?.id?._serialized) throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
-        messageIds.push(String(message.id._serialized));
+        sendPhase = 'client_returned_media';
+        logger.info('whatsapp_message_send_returned', {
+          session_id: SESSION_ID,
+          content_type: shouldSendMediaAsDocument(attachment.mime_type) ? 'document' : 'media',
+          ...outboundMessageIdDiagnostics(message),
+        });
+        const messageId = outboundMessageId(message);
+        if (!messageId) {
+          sendPhase = 'returned_without_id_media';
+          throw Object.assign(new Error('message id missing'), { code: 'MESSAGE_ID_MISSING' });
+        }
+        messageIds.push(messageId);
       }
       await this.#emitEvent('message_sent', { group_id: canalGrupoId, messages_count: messageIds.length, attachments_count: anexos.length });
       logger.info('whatsapp_message_sent', { session_id: SESSION_ID, messages_count: messageIds.length, attachments_count: anexos.length });
@@ -759,6 +822,7 @@ export class SessionManager {
         group_id_present: Boolean(canalGrupoId),
         attachments_count: anexos.length,
         quoted: Boolean(quotedMessageId),
+        send_phase: sendPhase,
         error_type: error?.constructor?.name || 'Error',
         error_code: outboundErrorCode(error),
         error_message: safeError(error),
